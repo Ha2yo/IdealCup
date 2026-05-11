@@ -168,7 +168,8 @@ public final class IdealCupGame {
 
     public void handleJoin(Player player) {
         if (phase == GamePhase.VOTING) {
-            player.sendMessage(ChatColor.YELLOW + "이미 투표가 진행 중입니다. 다음 경기부터 투표할 수 있습니다.");
+            eligibleVoters.add(player.getUniqueId());
+            player.sendActionBar(Component.text("마우스로 후보를 바라보고 우클릭하여 투표하세요."));
         } else if (isRunning()) {
             player.sendMessage(ChatColor.YELLOW + "이상형 월드컵이 진행 중입니다. 다음 투표가 시작되면 참여할 수 있습니다.");
         }
@@ -570,6 +571,10 @@ public final class IdealCupGame {
         ItemStack itemStack = player.getInventory().getItemInMainHand();
         if (!isRemoteItem(itemStack)) {
             return false;
+        }
+        if (mediaPlaying) {
+            player.sendActionBar(Component.text("영상 재생 중에는 타이머를 넘길 수 없습니다."));
+            return true;
         }
         if (activeCountdownDone == null) {
             player.sendMessage(ChatColor.YELLOW + "넘길 수 있는 타이머가 없습니다.");

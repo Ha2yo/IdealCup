@@ -145,7 +145,7 @@ public final class IdealCupCommand implements CommandExecutor, TabCompleter {
                     return;
                 }
                 candidateRepository.reload();
-                sender.sendMessage(ChatColor.GREEN + "리소스팩을 생성했습니다. 생성된 이미지: " + result.candidates() + "개");
+                sender.sendMessage(ChatColor.GREEN + "리소스팩을 생성했습니다. 생성된 후보: " + result.candidates() + "개");
             });
         });
     }
@@ -163,17 +163,17 @@ public final class IdealCupCommand implements CommandExecutor, TabCompleter {
                     sender.sendMessage(ChatColor.RED + "리소스팩 원본 복원에 실패했습니다.");
                     return;
                 }
-                sender.sendMessage(ChatColor.GREEN + "리소스팩 내용을 복원했습니다. 복원된 이미지: " + result.candidates() + "개");
+                sender.sendMessage(ChatColor.GREEN + "리소스팩 내용을 복원했습니다. 복원된 후보: " + result.candidates() + "개");
             });
         });
     }
 
     private void sendProgress(CommandSender sender, String message) {
-        Bukkit.getScheduler().runTask(plugin, () -> sender.sendMessage(ChatColor.GRAY + "[IdealCup] " + message));
+        Bukkit.getScheduler().runTask(plugin, () -> sender.sendMessage(ChatColor.GRAY + message));
     }
 
     private void sendWarningProgress(CommandSender sender, String message) {
-        Bukkit.getScheduler().runTask(plugin, () -> sender.sendMessage(ChatColor.RED + "[IdealCup] " + message));
+        Bukkit.getScheduler().runTask(plugin, () -> sender.sendMessage(ChatColor.RED + message));
     }
 
     private void forceWin(CommandSender sender, String[] args) {

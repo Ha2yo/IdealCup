@@ -52,15 +52,19 @@ public final class CandidateRepository {
 
         try (ZipFile zipFile = new ZipFile(packFile, StandardCharsets.UTF_8)) {
             ZipEntry manifestEntry = zipFile.getEntry(MANIFEST_PATH);
-            if (manifestEntry == null) {
-                warnings.add("resourcepack.zip 안에 " + MANIFEST_PATH + " 파일이 없습니다.");
-                return;
-            }
-
             YamlConfiguration manifest;
-            try (InputStream inputStream = zipFile.getInputStream(manifestEntry);
-                 InputStreamReader reader = new InputStreamReader(inputStream, StandardCharsets.UTF_8)) {
-                manifest = YamlConfiguration.loadConfiguration(reader);
+            if (manifestEntry == null) {
+                File sourceManifest = new File(plugin.getDataFolder(), "resourcepack-src/" + MANIFEST_PATH);
+                if (!sourceManifest.isFile()) {
+                    warnings.add("resourcepack.zip and resourcepack-src/" + MANIFEST_PATH + " are missing.");
+                    return;
+                }
+                manifest = YamlConfiguration.loadConfiguration(sourceManifest);
+            } else {
+                try (InputStream inputStream = zipFile.getInputStream(manifestEntry);
+                     InputStreamReader reader = new InputStreamReader(inputStream, StandardCharsets.UTF_8)) {
+                    manifest = YamlConfiguration.loadConfiguration(reader);
+                }
             }
 
             ConfigurationSection section = manifest.getConfigurationSection("candidates");
