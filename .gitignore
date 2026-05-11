@@ -1,0 +1,9 @@
+.gradle/
+build/
+.idea/
+*.class
+*.log
+
+resourcepack.zip
+resourcepack-build/
+resourcepack-src-backup.zip
