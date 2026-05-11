@@ -1,0 +1,116 @@
+plugins {
+    id 'java'
+    id("xyz.jpenilla.run-paper") version "2.3.1"
+}
+
+group = 'org.ha2yo'
+version = '1.0'
+
+repositories {
+    mavenCentral()
+    maven {
+        name = "papermc-repo"
+        url = "https://repo.papermc.io/repository/maven-public/"
+    }
+}
+
+dependencies {
+    compileOnly("io.papermc.paper:paper-api:1.21.10-R0.1-SNAPSHOT")
+    implementation("com.twelvemonkeys.imageio:imageio-webp:3.13.1")
+}
+
+tasks {
+    runServer {
+        // Configure the Minecraft version for our task.
+        // This is the only required configuration besides applying the plugin.
+        // Your plugin's jar (or shadowJar if present) will be used automatically.
+        minecraftVersion("1.21")
+    }
+}
+
+def targetJavaVersion = 21
+java {
+    def javaVersion = JavaVersion.toVersion(targetJavaVersion)
+    sourceCompatibility = javaVersion
+    targetCompatibility = javaVersion
+    if (JavaVersion.current() < javaVersion) {
+        toolchain.languageVersion = JavaLanguageVersion.of(targetJavaVersion)
+    }
+}
+
+tasks.withType(JavaCompile).configureEach {
+    options.encoding = 'UTF-8'
+
+    if (targetJavaVersion >= 10 || JavaVersion.current().isJava10Compatible()) {
+        options.release.set(targetJavaVersion)
+    }
+}
+
+processResources {
+    def props = [version: version]
+    inputs.properties props
+    filteringCharset 'UTF-8'
+    filesMatching('plugin.yml') {
+        expand props
+    }
+}
+
+def ffmpegDownloadUrl = 'https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-gpl.zip'
+def ffmpegZipFile = layout.buildDirectory.file('downloads/ffmpeg-win64.zip')
+def ffmpegToolDir = layout.buildDirectory.dir('ffmpeg-tools')
+def ffmpegExeFile = layout.buildDirectory.file('ffmpeg-tools/tools/ffmpeg.exe')
+
+tasks.register('downloadFfmpeg') {
+    outputs.file(ffmpegZipFile)
+
+    doLast {
+        def target = ffmpegZipFile.get().asFile
+        target.parentFile.mkdirs()
+        if (target.isFile() && target.length() > 0L) {
+            return
+        }
+        new URL(ffmpegDownloadUrl).withInputStream { input ->
+            target.withOutputStream { output ->
+                output << input
+            }
+        }
+    }
+}
+
+tasks.register('extractFfmpeg') {
+    dependsOn tasks.named('downloadFfmpeg')
+    inputs.file(ffmpegZipFile)
+    outputs.file(ffmpegExeFile)
+
+    doLast {
+        def target = ffmpegExeFile.get().asFile
+        target.parentFile.mkdirs()
+        def zip = new java.util.zip.ZipFile(ffmpegZipFile.get().asFile)
+        try {
+            def entry = zip.entries().find { !it.directory && it.name.replace('\\', '/').toLowerCase(Locale.ROOT).endsWith('/bin/ffmpeg.exe') }
+            if (entry == null) {
+                throw new GradleException('ffmpeg zip 안에서 bin/ffmpeg.exe를 찾지 못했습니다.')
+            }
+            zip.getInputStream(entry).withCloseable { input ->
+                target.withOutputStream { output ->
+                    output << input
+                }
+            }
+        } finally {
+            zip.close()
+        }
+    }
+}
+
+tasks.jar{
+    dependsOn tasks.named('extractFfmpeg')
+    archiveFileName = 'IdealCup.jar'
+    destinationDirectory = file('E:\\Minecraft Server\\IdealCup\\plugins')
+    duplicatesStrategy = DuplicatesStrategy.EXCLUDE
+    from(ffmpegToolDir) {
+        into ''
+    }
+    from {
+        configurations.runtimeClasspath.collect { it.isDirectory() ? it : zipTree(it) }
+    }
+}

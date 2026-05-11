@@ -1,0 +1,22 @@
+name: IdealCup
+version: '${version}'
+main: org.ha2yo.idealCup.IdealCup
+api-version: '1.21'
+commands:
+  idealcup:
+    description: 이상형 월드컵 관리 명령어
+    usage: /idealcup <start <월드컵이름> <참가자수>|stop|buildpack|unpack|status|forcewin|play|set>
+    aliases: [icup]
+  마우스:
+    description: 이상형 월드컵 마우스 아이템 지급
+    usage: /마우스
+  망원경:
+    description: 망원경 지급
+    usage: /망원경
+  리모컨:
+    description: 관리자 전용 리모컨 지급
+    usage: /리모컨
+    permission: idealcup.admin
+permissions:
+  idealcup.admin:
+    default: op

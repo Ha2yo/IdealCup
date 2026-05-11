@@ -1,0 +1,20 @@
+timing:
+  preview-seconds: 0
+  vote-seconds: 20
+  result-seconds: 3
+  round-transition-seconds: 5
+  debate-seconds: 20
+
+display:
+  image-scale: 4.0
+  text-y-offset: 2.4
+
+locations:
+  pos1: null
+  pos2: null
+
+board:
+  maps-per-tick: 24
+  animation-maps-per-tick: 10000
+  max-columns: 0
+  max-rows: 0
