@@ -12,18 +12,11 @@ display:
 locations:
   pos1: null
   pos2: null
+  lobby: null
+  cinema: null
 
 board:
   maps-per-tick: 24
   animation-maps-per-tick: 10000
   max-columns: 0
   max-rows: 0
-
-resource-packs:
-  enabled: false
-  required: true
-  send-delay-ticks: 40
-  prompt: "IdealCup media pack"
-  packs:
-    - url: ""
-      sha1: ""

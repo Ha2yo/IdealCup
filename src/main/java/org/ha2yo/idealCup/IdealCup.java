@@ -5,7 +5,6 @@ import org.ha2yo.idealCup.command.SupplyCommand;
 import org.ha2yo.idealCup.game.IdealCupGame;
 import org.ha2yo.idealCup.listener.PlayerListener;
 import org.ha2yo.idealCup.resource.CandidateRepository;
-import org.ha2yo.idealCup.resource.ResourcePackSender;
 import org.ha2yo.idealCup.visual.CandidateDisplay;
 import org.bukkit.command.PluginCommand;
 import org.bukkit.plugin.java.JavaPlugin;
@@ -14,14 +13,12 @@ public final class IdealCup extends JavaPlugin {
     private CandidateRepository candidateRepository;
     private CandidateDisplay candidateDisplay;
     private IdealCupGame game;
-    private ResourcePackSender resourcePackSender;
 
     @Override
     public void onEnable() {
         saveDefaultConfig();
 
         candidateRepository = new CandidateRepository(this);
-        resourcePackSender = new ResourcePackSender(this);
         candidateDisplay = new CandidateDisplay(this);
         candidateDisplay.clearPersistedBoard();
         game = new IdealCupGame(this, candidateRepository, candidateDisplay);
@@ -45,7 +42,7 @@ public final class IdealCup extends JavaPlugin {
             remoteCommand.setExecutor(new SupplyCommand(game, SupplyCommand.SupplyType.REMOTE));
         }
 
-        getServer().getPluginManager().registerEvents(new PlayerListener(game, resourcePackSender), this);
+        getServer().getPluginManager().registerEvents(new PlayerListener(game), this);
         candidateRepository.reload();
     }
 

@@ -1,6 +1,7 @@
 package org.ha2yo.idealCup.visual;
 
 import net.kyori.adventure.text.Component;
+import net.kyori.adventure.text.format.NamedTextColor;
 import org.ha2yo.idealCup.model.Candidate;
 import org.ha2yo.idealCup.game.VoteChoice;
 import org.bukkit.Color;
@@ -184,6 +185,29 @@ public final class CandidateDisplay {
         Location nameLocation = board.locationAt(0.0D, -board.height() / 2.0D + board.height() / 5.0D, 0.13D);
         TextDisplay nameText = spawnText(winner.name(), nameLocation, board.yaw(), nameScale, null);
         attachCandidateText(winner, nameText, nameLocation, board.locationAt(0.0D, -board.height() / 2.0D + 0.15D, 0.13D), nameScale);
+    }
+
+    public void showRanking(String cupName, List<RankingRow> rows) {
+        BoardSpec board = readBoardSpec();
+        if (board == null) {
+            return;
+        }
+        cancelAnimationTask();
+        clearEntities();
+        ensureBackground(board);
+
+        TextLayout textLayout = textLayout(board);
+        int limit = rows.size();
+        if (limit <= 0) {
+            spawnText("기록이 없습니다.", board.locationAt(0.0D, 0.0D, 0.14D), board.yaw(), textLayout.nameScale(), null);
+            return;
+        }
+
+        double rowGap = board.height() * 0.48D;
+        double startY = -board.height() / 2.0D - rowGap * 0.35D;
+        double endY = startY + rowGap * limit + board.height() * 1.2D;
+        List<ScrollingImage> scrollingImages = spawnRankingImages(board, rows, limit, startY, rowGap);
+        animateRankingMove(scrollingImages, endY - startY, 300 + limit * 75);
     }
 
     public void showPreview(Candidate candidate) {
@@ -417,8 +441,12 @@ public final class CandidateDisplay {
     }
 
     private TextDisplay spawnText(String text, Location location, float yaw, double scale, Color backgroundColor) {
+        return spawnText(Component.text(text), location, yaw, scale, backgroundColor);
+    }
+
+    private TextDisplay spawnText(Component text, Location location, float yaw, double scale, Color backgroundColor) {
         TextDisplay display = location.getWorld().spawn(location, TextDisplay.class, textDisplay -> {
-            textDisplay.text(Component.text(text));
+            textDisplay.text(text);
             textDisplay.setBillboard(Display.Billboard.FIXED);
             textDisplay.setRotation(yaw, 0.0F);
             textDisplay.setAlignment(TextDisplay.TextAlignment.CENTER);
@@ -434,6 +462,116 @@ public final class CandidateDisplay {
         display.addScoreboardTag(DISPLAY_TAG);
         entities.add(display);
         return display;
+    }
+
+    private List<ScrollingImage> spawnRankingImages(BoardSpec board, List<RankingRow> rows, int limit, double baseY, double rowGap) {
+        int imageCount = limit;
+        List<ScrollingImage> images = new ArrayList<>();
+        if (imageCount <= 0) {
+            return images;
+        }
+
+        double imageAreaWidth = board.width() * 0.22D;
+        double imageAreaHeight = rowGap * 0.68D;
+        double x = 0.0D;
+        double rankX = x - imageAreaWidth * 1.05D;
+        double winsX = x + imageAreaWidth * 1.05D;
+        double rankScale = 3.8D;
+        double winsScale = 3.5D;
+        double topY = baseY + board.height() * 0.18D;
+        for (int index = 0; index < imageCount; index++) {
+            RankingRow row = rows.get(index);
+            Candidate candidate = row.candidate();
+            if (candidate == null) {
+                continue;
+            }
+            DisplaySize size = fitImageSize(candidate, imageAreaWidth, imageAreaHeight);
+            double y = topY - index * rowGap;
+            ItemDisplay image = spawnImage(candidate, board.locationAt(x, y, 0.08D), board.yaw(), size, 1, true);
+            Component rank = Component.text((index + 1) + "위");
+            Component label = Component.text(row.name());
+            double labelScale = fitTextScale(row.name(), 2.7D, imageAreaWidth * 2.15D);
+            double labelYOffset = size.height() / 2.0D + 0.9D;
+            double statY = y - 0.12D;
+            TextDisplay rankDisplay = spawnText(rank, board.locationAt(rankX, statY, 0.14D), board.yaw(), rankScale, null);
+            TextDisplay labelDisplay = spawnText(label, board.locationAt(x, y - labelYOffset, 0.14D), board.yaw(), labelScale, null);
+            TextDisplay winsDisplay = spawnText(Component.text(row.statText(), NamedTextColor.GOLD), board.locationAt(winsX, statY, 0.14D), board.yaw(), winsScale, null);
+            images.add(new ScrollingImage(
+                    image,
+                    candidate,
+                    rankDisplay,
+                    labelDisplay,
+                    winsDisplay,
+                    board.locationAt(x, y, 0.08D),
+                    board.locationAt(rankX, statY, 0.14D),
+                    board.locationAt(x, y - labelYOffset, 0.14D),
+                    board.locationAt(winsX, statY, 0.14D),
+                    rankScale,
+                    labelScale,
+                    winsScale,
+                    size
+            ));
+        }
+        return images;
+    }
+
+    private void animateRankingMove(List<ScrollingImage> images, double imageYOffset, int frames) {
+        animationTask = new BukkitRunnable() {
+            private int frame;
+
+            @Override
+            public void run() {
+                if (images.stream().noneMatch(image -> image.display().isValid())) {
+                    animationTask = null;
+                    cancel();
+                    return;
+                }
+                double progress = (double) frame / (double) Math.max(1, frames - 1);
+                for (ScrollingImage image : images) {
+                    double offset = imageYOffset * progress;
+                    moveImage(image.display(), image.imageStart().clone().add(0.0D, offset, 0.0D), image.size());
+                    updateRankingFrame(image, frame);
+                    moveText(image.rank(), image.rankStart().clone().add(0.0D, offset, 0.0D), image.rankScale());
+                    moveText(image.label(), image.labelStart().clone().add(0.0D, offset, 0.0D), image.labelScale());
+                    moveText(image.wins(), image.winsStart().clone().add(0.0D, offset, 0.0D), image.winsScale());
+                }
+                frame++;
+                if (frame >= frames) {
+                    animationTask = null;
+                    cancel();
+                }
+            }
+        }.runTaskTimer(plugin, 0L, 1L);
+    }
+
+    private void updateRankingFrame(ScrollingImage image, int elapsedTicks) {
+        Candidate candidate = image.candidate();
+        if (candidate.frameItemModels().isEmpty()) {
+            return;
+        }
+        int cycleTicks = 0;
+        for (int index = 0; index < candidate.frameItemModels().size(); index++) {
+            cycleTicks += rankingFrameTicks(candidate, index);
+        }
+        if (cycleTicks <= 0) {
+            return;
+        }
+        int tick = elapsedTicks % cycleTicks;
+        int accumulatedTicks = 0;
+        for (int index = 0; index < candidate.frameItemModels().size(); index++) {
+            accumulatedTicks += rankingFrameTicks(candidate, index);
+            if (tick < accumulatedTicks) {
+                image.display().setItemStack(createImageItem(candidate, candidate.frameItemModels().get(index)));
+                return;
+            }
+        }
+    }
+
+    private int rankingFrameTicks(Candidate candidate, int frameIndex) {
+        if (frameIndex < candidate.frameTicks().size()) {
+            return Math.max(1, candidate.frameTicks().get(frameIndex));
+        }
+        return 1;
     }
 
     private void spawnTitle(BoardSpec board, TextLayout textLayout, String title) {
@@ -636,6 +774,15 @@ public final class CandidateDisplay {
     }
 
     private record CandidateImage(ItemDisplay display, Candidate candidate, TextDisplay playOverlay, TextDisplay nameText, Location normalTextLocation, Location loweredTextLocation, double textScale) {
+    }
+
+    private record ScrollingImage(ItemDisplay display, Candidate candidate, TextDisplay rank, TextDisplay label, TextDisplay wins, Location imageStart, Location rankStart, Location labelStart, Location winsStart, double rankScale, double labelScale, double winsScale, DisplaySize size) {
+    }
+
+    public record RankingRow(Candidate candidate, String name, String resultLabel, long votes) {
+        private String statText() {
+            return resultLabel + "\n" + votes + "표 획득";
+        }
     }
 
     private record BoardSpec(World world, double centerX, double centerY, double centerZ, double width, double height, boolean useX, BlockFace face, float yaw) {

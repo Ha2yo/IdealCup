@@ -26,6 +26,7 @@ public final class IdealCupCommand implements CommandExecutor, TabCompleter {
     private final CandidateRepository candidateRepository;
     private final IdealCupGame game;
     private final ResourcePackBuilder resourcePackBuilder;
+    private boolean buildingResourcePack;
 
     public IdealCupCommand(JavaPlugin plugin, CandidateRepository candidateRepository, IdealCupGame game) {
         this.plugin = plugin;
@@ -36,6 +37,10 @@ public final class IdealCupCommand implements CommandExecutor, TabCompleter {
 
     @Override
     public boolean onCommand(CommandSender sender, Command command, String label, String[] args) {
+        if (args.length > 0 && args[0].equalsIgnoreCase("result")) {
+            showResult(sender);
+            return true;
+        }
         if (!sender.hasPermission("idealcup.admin")) {
             sender.sendMessage(ChatColor.RED + "권한이 없습니다.");
             return true;
@@ -51,6 +56,8 @@ public final class IdealCupCommand implements CommandExecutor, TabCompleter {
             case "stop" -> game.stop(true);
             case "buildpack" -> buildPack(sender, args);
             case "unpack" -> unpack(sender, args);
+            case "packready" -> packReady(sender, args);
+            case "result" -> showResult(sender);
             case "status" -> sender.sendMessage(ChatColor.AQUA + game.status());
             case "forcewin" -> forceWin(sender, args);
             case "play" -> play(sender, args);
@@ -63,10 +70,13 @@ public final class IdealCupCommand implements CommandExecutor, TabCompleter {
     @Override
     public List<String> onTabComplete(CommandSender sender, Command command, String alias, String[] args) {
         if (!sender.hasPermission("idealcup.admin")) {
+            if (args.length == 1) {
+                return filter(List.of("result"), args[0]);
+            }
             return Collections.emptyList();
         }
         if (args.length == 1) {
-            return filter(Arrays.asList("start", "stop", "buildpack", "unpack", "status", "forcewin", "play", "set"), args[0]);
+            return filter(Arrays.asList("start", "stop", "buildpack", "unpack", "status", "forcewin", "play", "set", "packready", "result"), args[0]);
         }
         if (args.length == 2 && args[0].equalsIgnoreCase("play")) {
             candidateRepository.reload();
@@ -76,7 +86,13 @@ public final class IdealCupCommand implements CommandExecutor, TabCompleter {
             return filter(List.of("force"), args[1]);
         }
         if (args.length == 2 && args[0].equalsIgnoreCase("buildpack")) {
-            return filter(Arrays.asList("64", "96", "128", "192", "256", "512"), args[1]);
+            return filter(Arrays.asList("128", "192", "256", "384", "512"), args[1]);
+        }
+        if (args.length == 3 && args[0].equalsIgnoreCase("buildpack")) {
+            return filter(ResourcePackBuilder.ALLOWED_ANIMATION_FPS.stream().map(String::valueOf).toList(), args[2]);
+        }
+        if (args.length == 4 && args[0].equalsIgnoreCase("buildpack")) {
+            return filter(Arrays.asList("1", "2", "3", "4", "6", "8"), args[3]);
         }
         if (args.length >= 3 && args[0].equalsIgnoreCase("start")) {
             return filter(Arrays.asList("2", "4", "8", "16", "32", "64", "128"), args[args.length - 1]);
@@ -85,7 +101,7 @@ public final class IdealCupCommand implements CommandExecutor, TabCompleter {
             return filter(Arrays.asList("left", "right"), args[1]);
         }
         if (args.length == 2 && args[0].equalsIgnoreCase("set")) {
-            return filter(Arrays.asList("pos1", "pos2", "debate-left", "debate-right", "debatetime", "votetime"), args[1]);
+            return filter(Arrays.asList("pos1", "pos2", "debate-left", "debate-right", "lobby", "cinema", "debatetime", "votetime"), args[1]);
         }
         if (args.length == 3 && args[0].equalsIgnoreCase("set")
                 && (args[1].equalsIgnoreCase("debatetime") || args[1].equalsIgnoreCase("votetime"))) {
@@ -115,7 +131,13 @@ public final class IdealCupCommand implements CommandExecutor, TabCompleter {
     }
 
     private void buildPack(CommandSender sender, String[] args) {
-        int maxImageSize = 128;
+        if (buildingResourcePack) {
+            sender.sendMessage(ChatColor.RED + "리소스팩 변환이 이미 진행 중입니다.");
+            return;
+        }
+        int maxImageSize = 256;
+        int workerCount = 0;
+        int animationFps = 5;
         if (args.length >= 2) {
             try {
                 maxImageSize = Integer.parseInt(args[1]);
@@ -128,25 +150,66 @@ public final class IdealCupCommand implements CommandExecutor, TabCompleter {
                 return;
             }
         }
+        if (args.length >= 3) {
+            try {
+                animationFps = Integer.parseInt(args[2]);
+            } catch (NumberFormatException exception) {
+                sender.sendMessage(ChatColor.RED + "프레임은 숫자로 입력해야 합니다.");
+                return;
+            }
+            if (!ResourcePackBuilder.ALLOWED_ANIMATION_FPS.contains(animationFps)) {
+                sender.sendMessage(ChatColor.RED + "프레임은 1 이상 20 이하로 입력하세요.");
+                return;
+            }
+        }
+        if (args.length >= 4) {
+            try {
+                workerCount = Integer.parseInt(args[3]);
+            } catch (NumberFormatException exception) {
+                sender.sendMessage(ChatColor.RED + "병렬 처리 개수는 숫자로 입력해야 합니다.");
+                return;
+            }
+            if (workerCount < 1 || workerCount > 8) {
+                sender.sendMessage(ChatColor.RED + "병렬 처리 개수는 1 이상 8 이하로 입력하세요.");
+                return;
+            }
+        }
         int buildMaxImageSize = maxImageSize;
-        sender.sendMessage(ChatColor.YELLOW + "리소스팩 생성을 시작합니다. 최대 픽셀: " + buildMaxImageSize);
+        int buildWorkerCount = workerCount;
+        int buildAnimationFps = animationFps;
+        String packDescription = args.length >= 5 ? String.join(" ", Arrays.copyOfRange(args, 4, args.length)) : null;
+        buildingResourcePack = true;
+        sender.sendMessage(ChatColor.YELLOW + "리소스팩 생성을 시작합니다. 최대 픽셀: " + buildMaxImageSize
+                + ", 병렬 처리: " + (buildWorkerCount > 0 ? buildWorkerCount : "2")
+                + ", FPS: " + buildAnimationFps);
         Bukkit.getScheduler().runTaskAsynchronously(plugin, () -> {
-            ResourcePackBuilder.BuildResult result = resourcePackBuilder.build(
-                    buildMaxImageSize,
-                    message -> sendProgress(sender, message),
-                    (message, warning) -> sendWarningProgress(sender, message)
-            );
-            Bukkit.getScheduler().runTask(plugin, () -> {
-                for (String warning : result.warnings()) {
-                    sender.sendMessage(ChatColor.RED + warning);
-                }
-                if (!result.success()) {
-                    sender.sendMessage(ChatColor.RED + "리소스팩 생성에 실패했습니다.");
-                    return;
-                }
-                candidateRepository.reload();
-                sender.sendMessage(ChatColor.GREEN + "리소스팩을 생성했습니다. 생성된 후보: " + result.candidates() + "개");
-            });
+            try {
+                ResourcePackBuilder.BuildResult result = resourcePackBuilder.build(
+                        buildMaxImageSize,
+                        buildWorkerCount,
+                        buildAnimationFps,
+                        packDescription,
+                        message -> sendProgress(sender, message),
+                        (message, warning) -> sendWarningProgress(sender, message)
+                );
+                Bukkit.getScheduler().runTask(plugin, () -> {
+                    buildingResourcePack = false;
+                    for (String warning : result.warnings()) {
+                        sender.sendMessage(ChatColor.RED + warning);
+                    }
+                    if (!result.success()) {
+                        sender.sendMessage(ChatColor.RED + "리소스팩 생성에 실패했습니다.");
+                        return;
+                    }
+                    candidateRepository.reload();
+                    sender.sendMessage(ChatColor.GREEN + "리소스팩을 생성했습니다. 생성된 후보: " + result.candidates() + "개");
+                });
+            } catch (RuntimeException exception) {
+                Bukkit.getScheduler().runTask(plugin, () -> {
+                    buildingResourcePack = false;
+                    sender.sendMessage(ChatColor.RED + "리소스팩 생성 중 오류가 발생했습니다: " + exception.getMessage());
+                });
+            }
         });
     }
 
@@ -220,6 +283,14 @@ public final class IdealCupCommand implements CommandExecutor, TabCompleter {
         sender.sendMessage(ChatColor.GREEN + "후보 " + candidate.id() + " 미리보기를 재생합니다.");
     }
 
+    private void showResult(CommandSender sender) {
+        if (!(sender instanceof Player player)) {
+            sender.sendMessage(ChatColor.RED + "결과 창은 플레이어만 열 수 있습니다.");
+            return;
+        }
+        game.openResultDialog(player);
+    }
+
     private Candidate findCandidate(String input) {
         String id = input.trim();
         for (Candidate candidate : candidateRepository.getCandidates()) {
@@ -238,6 +309,19 @@ public final class IdealCupCommand implements CommandExecutor, TabCompleter {
         return null;
     }
 
+    private void packReady(CommandSender sender, String[] args) {
+        if (args.length < 2) {
+            sender.sendMessage(ChatColor.RED + "사용법: /idealcup packready <player>");
+            return;
+        }
+        Player player = Bukkit.getPlayerExact(args[1]);
+        if (player == null) {
+            sender.sendMessage(ChatColor.RED + "플레이어를 찾을 수 없습니다: " + args[1]);
+            return;
+        }
+        game.handleResourcePackReady(player);
+    }
+
     private void setLocation(CommandSender sender, String[] args) {
         if (args.length >= 2 && args[1].equalsIgnoreCase("debatetime")) {
             setDebateTime(sender, args);
@@ -252,12 +336,12 @@ public final class IdealCupCommand implements CommandExecutor, TabCompleter {
             return;
         }
         if (args.length < 2) {
-            sender.sendMessage(ChatColor.RED + "사용법: /idealcup set <pos1|pos2|debate-left|debate-right|debatetime|votetime>");
+            sender.sendMessage(ChatColor.RED + "사용법: /idealcup set <pos1|pos2|debate-left|debate-right|lobby|cinema|debatetime|votetime>");
             return;
         }
         String position = args[1].toLowerCase(Locale.ROOT);
-        if (!position.equals("pos1") && !position.equals("pos2") && !position.equals("debate-left") && !position.equals("debate-right")) {
-            sender.sendMessage(ChatColor.RED + "알 수 없는 설정입니다. 위치는 pos1, pos2, debate-left, debate-right 중 하나로 입력하세요.");
+        if (!position.equals("pos1") && !position.equals("pos2") && !position.equals("debate-left") && !position.equals("debate-right") && !position.equals("lobby") && !position.equals("cinema")) {
+            sender.sendMessage(ChatColor.RED + "알 수 없는 설정입니다. 위치는 pos1, pos2, debate-left, debate-right, lobby, cinema 중 하나로 입력하세요.");
             sender.sendMessage(ChatColor.RED + "시간 설정은 /idealcup set votetime <초> 또는 /idealcup set debatetime <초>를 사용하세요.");
             return;
         }
@@ -306,12 +390,13 @@ public final class IdealCupCommand implements CommandExecutor, TabCompleter {
     private void sendHelp(CommandSender sender, String label) {
         sender.sendMessage(ChatColor.AQUA + "/" + label + " start <월드컵이름> <참가자수>");
         sender.sendMessage(ChatColor.AQUA + "/" + label + " stop - 월드컵 중지");
-        sender.sendMessage(ChatColor.AQUA + "/" + label + " buildpack [픽셀수] - 리소스팩 생성 (기본 128)");
+        sender.sendMessage(ChatColor.AQUA + "/" + label + " buildpack [픽셀수] [fps] [병렬개수] [팩이름] - 리소스팩 생성");
         sender.sendMessage(ChatColor.AQUA + "/" + label + " unpack [force] - resourcepack.zip에서 복원본 추출");
         sender.sendMessage(ChatColor.AQUA + "/" + label + " status - 진행 상태 확인");
         sender.sendMessage(ChatColor.AQUA + "/" + label + " forcewin <left(왼쪽)|right(오른쪽)> - 강제 승리");
         sender.sendMessage(ChatColor.AQUA + "/" + label + " play <번호> - 후보 미리보기 재생");
-        sender.sendMessage(ChatColor.AQUA + "/" + label + " set <pos1|pos2|debate-left|debate-right> - 표시/변론 위치 설정");
+        sender.sendMessage(ChatColor.AQUA + "/" + label + " result - 최종 결과 창 열기");
+        sender.sendMessage(ChatColor.AQUA + "/" + label + " set <pos1|pos2|debate-left|debate-right|lobby|cinema> - 표시/변론/이동 위치 설정");
         sender.sendMessage(ChatColor.AQUA + "/" + label + " set debatetime <초> - 변론 시간 설정");
         sender.sendMessage(ChatColor.AQUA + "/" + label + " set votetime <초> - 투표 시간 설정");
     }

@@ -1,7 +1,14 @@
 package org.ha2yo.idealCup.game;
 
+import io.papermc.paper.dialog.Dialog;
+import io.papermc.paper.registry.data.dialog.ActionButton;
+import io.papermc.paper.registry.data.dialog.DialogBase;
+import io.papermc.paper.registry.data.dialog.body.DialogBody;
+import io.papermc.paper.registry.data.dialog.type.DialogType;
 import net.kyori.adventure.text.Component;
 import net.kyori.adventure.text.format.NamedTextColor;
+import net.kyori.adventure.text.event.ClickEvent;
+import net.kyori.adventure.text.event.HoverEvent;
 import org.ha2yo.idealCup.model.Candidate;
 import org.ha2yo.idealCup.resource.CandidateRepository;
 import org.ha2yo.idealCup.visual.CandidateDisplay;
@@ -13,6 +20,7 @@ import org.bukkit.Material;
 import org.bukkit.boss.BarColor;
 import org.bukkit.boss.BarStyle;
 import org.bukkit.boss.BossBar;
+import org.bukkit.configuration.file.YamlConfiguration;
 import org.bukkit.entity.Player;
 import org.bukkit.inventory.ItemStack;
 import org.bukkit.inventory.meta.ItemMeta;
@@ -22,10 +30,13 @@ import org.bukkit.plugin.java.JavaPlugin;
 import org.bukkit.scheduler.BukkitRunnable;
 import org.bukkit.scheduler.BukkitTask;
 
+import java.io.File;
+import java.io.IOException;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -46,6 +57,7 @@ public final class IdealCupGame {
     private final Random random = new Random();
     private final List<BukkitTask> tasks = new ArrayList<>();
     private final Map<UUID, VoteChoice> votes = new HashMap<>();
+    private final Map<String, RankingEntry> rankingEntries = new HashMap<>();
     private final Set<UUID> eligibleVoters = new HashSet<>();
 
     private BossBar bossBar;
@@ -56,8 +68,10 @@ public final class IdealCupGame {
     private Candidate lastRunnerUp;
     private List<Candidate> displayedCandidates = List.of();
     private BukkitTask mediaPlaybackTask;
+    private BukkitTask rankingAudioTask;
     private boolean mediaPlaying;
     private Candidate playingCandidate;
+    private Candidate rankingAudioCandidate;
     private Runnable activeCountdownDone;
     private String cupName = "IdealCup";
     private UUID currentDebater;
@@ -66,6 +80,8 @@ public final class IdealCupGame {
     private int currentRoundSize;
     private int currentMatchNumber;
     private int currentTotalMatches;
+    private boolean finalRankingAvailable;
+    private boolean finalRankingShown;
 
     public IdealCupGame(JavaPlugin plugin, CandidateRepository candidateRepository, CandidateDisplay candidateDisplay) {
         this.plugin = plugin;
@@ -122,6 +138,11 @@ public final class IdealCupGame {
         cupName = name;
         startTitleShown = false;
         initialSize = size;
+        finalRankingAvailable = false;
+        finalRankingShown = false;
+        resetRankingAudio();
+        rankingEntries.clear();
+        resetHistory();
         Bukkit.getOnlinePlayers().forEach(this::prepareGameInventory);
         List<Candidate> selected = new ArrayList<>(candidateRepository.getCandidates());
         Collections.shuffle(selected, random);
@@ -133,6 +154,7 @@ public final class IdealCupGame {
         cancelTasks();
         removeBossBar();
         resetMediaPlayback();
+        resetRankingAudio();
         candidateDisplay.clear();
         phase = GamePhase.IDLE;
         startTitleShown = false;
@@ -143,6 +165,9 @@ public final class IdealCupGame {
         currentDebater = null;
         currentMatch = null;
         displayedCandidates = List.of();
+        finalRankingAvailable = false;
+        finalRankingShown = false;
+        rankingEntries.clear();
         if (announce) {
             Bukkit.broadcastMessage(ChatColor.RED + "이상형 월드컵이 중지되었습니다.");
         }
@@ -156,6 +181,9 @@ public final class IdealCupGame {
         cancelTasks();
         Candidate winner = choice == VoteChoice.LEFT ? currentMatch.left() : currentMatch.right();
         Candidate loser = choice == VoteChoice.LEFT ? currentMatch.right() : currentMatch.left();
+        long leftVotes = votes.values().stream().filter(voteChoice -> voteChoice == VoteChoice.LEFT).count();
+        long rightVotes = votes.values().stream().filter(voteChoice -> voteChoice == VoteChoice.RIGHT).count();
+        recordMatchVotes(leftVotes, rightVotes);
         finishMatch(winner, loser, "관리자가 결과를 강제 처리했습니다.");
     }
 
@@ -167,6 +195,7 @@ public final class IdealCupGame {
     }
 
     public void handleJoin(Player player) {
+        teleportToConfiguredLocation(player, "locations.lobby");
         if (phase == GamePhase.VOTING) {
             eligibleVoters.add(player.getUniqueId());
             player.sendActionBar(Component.text("마우스로 후보를 바라보고 우클릭하여 투표하세요."));
@@ -175,6 +204,17 @@ public final class IdealCupGame {
         }
         if (bossBar != null) {
             bossBar.addPlayer(player);
+        }
+    }
+
+    public void handleResourcePackReady(Player player) {
+        teleportToConfiguredLocation(player, "locations.cinema");
+    }
+
+    private void teleportToConfiguredLocation(Player player, String path) {
+        Location location = LocationConfig.read(plugin, path);
+        if (location != null) {
+            player.teleport(location);
         }
     }
 
@@ -274,6 +314,7 @@ public final class IdealCupGame {
 
         int voteSeconds = plugin.getConfig().getInt("timing.vote-seconds", 20);
         countdown(voteSeconds, remaining -> {
+            bossBar.setColor(BarColor.BLUE);
             updateBossBarTimer(remaining, voteSeconds);
             if (currentMatch != null) {
                 bossBar.setTitle("투표 마감까지 " + remaining + "초");
@@ -289,8 +330,10 @@ public final class IdealCupGame {
         long rightVotes = votes.values().stream().filter(choice -> choice == VoteChoice.RIGHT).count();
 
         if (leftVotes > rightVotes) {
+            recordMatchVotes(leftVotes, rightVotes);
             finishMatch(currentMatch.left(), currentMatch.right(), currentMatch.left().name() + " 승리: " + leftVotes + " vs " + rightVotes);
         } else if (rightVotes > leftVotes) {
+            recordMatchVotes(leftVotes, rightVotes);
             finishMatch(currentMatch.right(), currentMatch.left(), currentMatch.right().name() + " 승리: " + rightVotes + " vs " + leftVotes);
         } else {
             startDebate(leftVotes, rightVotes);
@@ -375,6 +418,10 @@ public final class IdealCupGame {
         phase = GamePhase.RESULT;
         lastRunnerUp = loser;
         nextRoundWinners.add(winner);
+        ensureBossBar();
+        bossBar.setColor(BarColor.GREEN);
+        bossBar.setProgress(1.0D);
+        bossBar.setTitle(message);
         resetMediaPlayback();
         if (currentMatch != null) {
             displayedCandidates = List.of(currentMatch.left(), currentMatch.right());
@@ -382,11 +429,11 @@ public final class IdealCupGame {
         if (currentMatch != null) {
             candidateDisplay.showMatchResult(currentMatch.left(), currentMatch.right(), winner, cupName, currentRoundSize, currentMatchNumber, currentTotalMatches);
         }
+        recordRankingWin(winner);
+        recordRankingLoss(loser);
+        saveMatchHistory(winner, loser, message);
         Bukkit.broadcastMessage(ChatColor.AQUA + message);
         playGlobalSound("minecraft:entity.player.levelup", 0.9F, 1.15F);
-        ensureBossBar();
-        bossBar.setColor(BarColor.GREEN);
-        bossBar.setProgress(1.0D);
         bossBar.setTitle(message + " | 관리자는 리모컨으로 넘길 수 있습니다.");
         int resultSeconds = plugin.getConfig().getInt("timing.result-seconds", 3);
         countdown(resultSeconds, remaining -> bossBar.setTitle(message), this::startNextMatch);
@@ -410,44 +457,156 @@ public final class IdealCupGame {
         bossBar.setProgress(1.0D);
         bossBar.setTitle("최종 우승: " + winner.name());
         Bukkit.broadcastMessage(ChatColor.LIGHT_PURPLE + "이상형 월드컵 최종 우승: " + winner.name());
-        playGlobalSound("minecraft:ui.toast.challenge_complete", 1.0F, 1.0F);
         Bukkit.getOnlinePlayers().forEach(player -> player.showTitle(net.kyori.adventure.title.Title.title(
                 Component.text("최종 우승"),
                 Component.text(winner.name())
         )));
-        saveHistory(winner);
+        Bukkit.getOnlinePlayers().forEach(this::sendResultDialogButton);
+        saveTournamentHistory(winner);
+        finalRankingAvailable = true;
+        finalRankingShown = false;
+        bossBar.setColor(BarColor.BLUE);
+        bossBar.setTitle("최종 결과 보기: /idealcup result");
         phase = GamePhase.IDLE;
         startTitleShown = false;
         currentQueue.clear();
         nextRoundWinners.clear();
         votes.clear();
         eligibleVoters.clear();
-        resetMediaPlayback();
     }
 
-    private void saveHistory(Candidate winner) {
-        List<Map<String, Object>> history = new ArrayList<>();
-        for (Map<?, ?> existingRecord : plugin.getConfig().getMapList("history")) {
+    private void resetHistory() {
+        File historyFile = new File(plugin.getDataFolder(), "history.yml");
+        YamlConfiguration historyConfig = new YamlConfiguration();
+        historyConfig.set("tournament.name", cupName);
+        historyConfig.set("tournament.size", initialSize);
+        historyConfig.set("tournament.started-at", LocalDateTime.now().format(DateTimeFormatter.ISO_LOCAL_DATE_TIME));
+        historyConfig.set("matches", new ArrayList<>());
+        saveHistoryConfig(historyConfig, historyFile);
+    }
+
+    private void saveMatchHistory(Candidate winner, Candidate loser, String reason) {
+        File historyFile = new File(plugin.getDataFolder(), "history.yml");
+        YamlConfiguration historyConfig = YamlConfiguration.loadConfiguration(historyFile);
+        List<Map<String, Object>> matches = copyHistoryRecords(historyConfig.getMapList("matches"));
+
+        Map<String, Object> record = new HashMap<>();
+        record.put("time", LocalDateTime.now().format(DateTimeFormatter.ISO_LOCAL_DATE_TIME));
+        record.put("round-size", currentRoundSize);
+        record.put("match-number", currentMatchNumber);
+        record.put("total-matches", currentTotalMatches);
+        if (currentMatch != null) {
+            record.put("left-id", currentMatch.left().id());
+            record.put("left-name", currentMatch.left().name());
+            record.put("right-id", currentMatch.right().id());
+            record.put("right-name", currentMatch.right().name());
+        }
+        record.put("winner-id", winner.id());
+        record.put("winner-name", winner.name());
+        record.put("loser-id", loser.id());
+        record.put("loser-name", loser.name());
+        record.put("reason", reason);
+        matches.add(record);
+
+        historyConfig.set("matches", matches);
+        saveHistoryConfig(historyConfig, historyFile);
+    }
+
+    private void saveTournamentHistory(Candidate winner) {
+        File historyFile = new File(plugin.getDataFolder(), "history.yml");
+        YamlConfiguration historyConfig = YamlConfiguration.loadConfiguration(historyFile);
+        historyConfig.set("tournament.finished-at", LocalDateTime.now().format(DateTimeFormatter.ISO_LOCAL_DATE_TIME));
+        historyConfig.set("tournament.winner-id", winner.id());
+        historyConfig.set("tournament.winner-name", winner.name());
+        if (lastRunnerUp != null) {
+            historyConfig.set("tournament.runner-up-id", lastRunnerUp.id());
+            historyConfig.set("tournament.runner-up-name", lastRunnerUp.name());
+        }
+        historyConfig.set("rankings", rankingHistoryRecords());
+        saveHistoryConfig(historyConfig, historyFile);
+    }
+
+    private List<Map<String, Object>> rankingHistoryRecords() {
+        List<Map<String, Object>> rankings = new ArrayList<>();
+        List<RankingEntry> entries = sortedRankingEntries();
+        for (int index = 0; index < entries.size(); index++) {
+            RankingEntry entry = entries.get(index);
+            Map<String, Object> record = new HashMap<>();
+            record.put("rank", index + 1);
+            record.put("id", entry.id());
+            record.put("name", entry.name());
+            record.put("result", entry.resultLabel(index + 1));
+            record.put("votes", entry.votes());
+            rankings.add(record);
+        }
+        return rankings;
+    }
+
+    public void openResultDialog(Player player) {
+        if (rankingEntries.isEmpty()) {
+            player.sendMessage(ChatColor.YELLOW + "아직 확인할 최종 결과가 없습니다.");
+            return;
+        }
+        List<DialogBody> bodies = new ArrayList<>();
+        bodies.add(DialogBody.plainMessage(Component.text(cupName + " 결과", NamedTextColor.GOLD), 420));
+        List<RankingEntry> entries = sortedRankingEntries();
+        Component resultTable = Component.empty();
+        for (int index = 0; index < entries.size(); index++) {
+            RankingEntry entry = entries.get(index);
+            resultTable = resultTable
+                    .append(Component.text((index + 1) + "위 " + entry.resultLabel(index + 1) + " · " + entry.votes() + "표", index == 0 ? NamedTextColor.GOLD : NamedTextColor.WHITE))
+                    .append(Component.newline())
+                    .append(Component.text(entry.name(), NamedTextColor.AQUA));
+            if (index + 1 < entries.size()) {
+                resultTable = resultTable.append(Component.newline()).append(Component.newline());
+            }
+        }
+        bodies.add(DialogBody.plainMessage(resultTable, 420));
+
+        Dialog dialog = Dialog.create(factory -> factory.empty()
+                .base(DialogBase.builder(Component.empty())
+                        .canCloseWithEscape(true)
+                        .pause(false)
+                        .afterAction(DialogBase.DialogAfterAction.CLOSE)
+                        .body(bodies)
+                        .inputs(List.of())
+                        .build())
+                .type(DialogType.notice(ActionButton.create(Component.text("닫기"), null, 80, null))));
+        player.showDialog(dialog);
+    }
+
+    private void sendResultDialogButton(Player player) {
+        player.sendMessage(Component.empty()
+                .append(Component.text("[최종 결과 보기]", NamedTextColor.GOLD)
+                        .clickEvent(ClickEvent.runCommand("/idealcup result"))
+                        .hoverEvent(HoverEvent.showText(Component.text("클릭해서 결과 창을 엽니다."))))
+                .append(Component.text(" 월드컵 결과를 확인할 수 있습니다.", NamedTextColor.GRAY)));
+    }
+
+    private List<Map<String, Object>> copyHistoryRecords(List<Map<?, ?>> records) {
+        List<Map<String, Object>> copiedRecords = new ArrayList<>();
+        for (Map<?, ?> record : records) {
             Map<String, Object> copiedRecord = new HashMap<>();
-            for (Map.Entry<?, ?> entry : existingRecord.entrySet()) {
+            for (Map.Entry<?, ?> entry : record.entrySet()) {
                 if (entry.getKey() instanceof String key) {
                     copiedRecord.put(key, entry.getValue());
                 }
             }
-            history.add(copiedRecord);
+            copiedRecords.add(copiedRecord);
         }
-        Map<String, Object> record = new HashMap<>();
-        record.put("time", LocalDateTime.now().format(DateTimeFormatter.ISO_LOCAL_DATE_TIME));
-        record.put("size", initialSize);
-        record.put("winner-id", winner.id());
-        record.put("winner-name", winner.name());
-        if (lastRunnerUp != null) {
-            record.put("runner-up-id", lastRunnerUp.id());
-            record.put("runner-up-name", lastRunnerUp.name());
+        return copiedRecords;
+    }
+
+    private void saveHistoryConfig(YamlConfiguration historyConfig, File historyFile) {
+        try {
+            historyConfig.save(historyFile);
+            if (plugin.getConfig().contains("history")) {
+                plugin.getConfig().set("history", null);
+                plugin.saveConfig();
+            }
+        } catch (IOException exception) {
+            plugin.getLogger().warning("history.yml 저장에 실패했습니다: " + exception.getMessage());
         }
-        history.add(record);
-        plugin.getConfig().set("history", history);
-        plugin.saveConfig();
     }
 
     private void countdown(int seconds, Consumer<Integer> tick, Runnable done) {
@@ -538,6 +697,10 @@ public final class IdealCupGame {
         if (!player.hasPermission("idealcup.admin") || !isRemoteItem(player.getInventory().getItemInMainHand())) {
             return false;
         }
+        if (finalRankingShown) {
+            player.sendActionBar(Component.text("결과 표시 중에는 영상 재생을 조작할 수 없습니다."));
+            return true;
+        }
         if (displayedCandidates.isEmpty()) {
             player.sendMessage(ChatColor.YELLOW + "재생할 후보 화면이 없습니다.");
             return true;
@@ -564,12 +727,22 @@ public final class IdealCupGame {
         return true;
     }
 
-    public boolean handleAdminSkip(Player player) {
-        if (!isRunning() || !player.hasPermission("idealcup.admin")) {
+    public boolean handleAdminSkip(Player player, org.bukkit.event.block.Action action) {
+        if (action != org.bukkit.event.block.Action.RIGHT_CLICK_AIR && action != org.bukkit.event.block.Action.RIGHT_CLICK_BLOCK) {
+            return false;
+        }
+        if (!player.hasPermission("idealcup.admin")) {
             return false;
         }
         ItemStack itemStack = player.getInventory().getItemInMainHand();
         if (!isRemoteItem(itemStack)) {
+            return false;
+        }
+        if (!isRunning() && finalRankingAvailable) {
+            showFinalRanking();
+            return true;
+        }
+        if (!isRunning()) {
             return false;
         }
         if (mediaPlaying) {
@@ -585,6 +758,68 @@ public final class IdealCupGame {
         cancelTasks();
         done.run();
         return true;
+    }
+
+    private void recordRankingWin(Candidate candidate) {
+        RankingEntry entry = rankingEntries.get(candidate.id());
+        if (entry == null) {
+            entry = new RankingEntry(candidate, candidate.id(), candidate.name(), 0, 0, currentRoundSize);
+        }
+        rankingEntries.put(candidate.id(), entry.withWin(currentRoundSize));
+    }
+
+    private void recordRankingLoss(Candidate candidate) {
+        RankingEntry entry = rankingEntries.get(candidate.id());
+        if (entry == null) {
+            entry = new RankingEntry(candidate, candidate.id(), candidate.name(), 0, 0, currentRoundSize);
+        }
+        rankingEntries.put(candidate.id(), entry.withLoss(currentRoundSize));
+    }
+
+    private void recordMatchVotes(long leftVotes, long rightVotes) {
+        if (currentMatch == null) {
+            return;
+        }
+        addCandidateVotes(currentMatch.left(), leftVotes);
+        addCandidateVotes(currentMatch.right(), rightVotes);
+    }
+
+    private void addCandidateVotes(Candidate candidate, long votes) {
+        RankingEntry entry = rankingEntries.get(candidate.id());
+        if (entry == null) {
+            entry = new RankingEntry(candidate, candidate.id(), candidate.name(), 0, 0, currentRoundSize);
+        }
+        rankingEntries.put(candidate.id(), entry.withVotes(votes));
+    }
+
+    private void showFinalRanking() {
+        if (finalRankingShown) {
+            return;
+        }
+        resetMediaPlayback();
+        finalRankingShown = true;
+        List<RankingEntry> entries = sortedRankingEntries();
+        List<CandidateDisplay.RankingRow> rows = new ArrayList<>();
+        for (int index = 0; index < entries.size(); index++) {
+            RankingEntry entry = entries.get(index);
+            rows.add(new CandidateDisplay.RankingRow(entry.candidate(), entry.name(), entry.resultLabel(index + 1), entry.votes()));
+        }
+        candidateDisplay.showRanking(cupName, rows);
+        startFinalRankingAudio(rows);
+        ensureBossBar();
+        bossBar.setColor(BarColor.BLUE);
+        bossBar.setProgress(1.0D);
+        bossBar.setTitle("최종 결과 보기: /idealcup result");
+    }
+
+    private List<RankingEntry> sortedRankingEntries() {
+        return rankingEntries.values().stream()
+                .sorted(Comparator
+                        .comparingInt(RankingEntry::wins).reversed()
+                        .thenComparingInt(RankingEntry::lastRoundSize)
+                        .thenComparing(Comparator.comparingLong(RankingEntry::votes).reversed())
+                        .thenComparing(RankingEntry::name))
+                .toList();
     }
 
     private Optional<Candidate> displayedCandidateFromLook(Player player) {
@@ -668,6 +903,45 @@ public final class IdealCupGame {
         }
         mediaPlaying = false;
         playingCandidate = null;
+    }
+
+    private void startFinalRankingAudio(List<CandidateDisplay.RankingRow> rows) {
+        resetRankingAudio();
+        List<Candidate> soundCandidates = rows.stream()
+                .map(CandidateDisplay.RankingRow::candidate)
+                .filter(candidate -> candidate != null && candidate.soundKey() != null)
+                .toList();
+        if (soundCandidates.isEmpty()) {
+            return;
+        }
+        playRankingAudio(soundCandidates, 0);
+    }
+
+    private void playRankingAudio(List<Candidate> soundCandidates, int index) {
+        if (index >= soundCandidates.size()) {
+            rankingAudioTask = null;
+            rankingAudioCandidate = null;
+            return;
+        }
+        Candidate candidate = soundCandidates.get(index);
+        rankingAudioCandidate = candidate;
+        playGlobalSound(candidate.soundKey(), 1.0F, 1.0F);
+        long nextDelayTicks = playbackTicks(candidate) + 10L;
+        rankingAudioTask = Bukkit.getScheduler().runTaskLater(plugin, () -> {
+            stopCandidateSound(candidate);
+            playRankingAudio(soundCandidates, index + 1);
+        }, nextDelayTicks);
+    }
+
+    private void resetRankingAudio() {
+        if (rankingAudioTask != null) {
+            rankingAudioTask.cancel();
+            rankingAudioTask = null;
+        }
+        if (rankingAudioCandidate != null) {
+            stopCandidateSound(rankingAudioCandidate);
+            rankingAudioCandidate = null;
+        }
     }
 
     private void stopCandidateSound(Candidate candidate) {
@@ -787,6 +1061,30 @@ public final class IdealCupGame {
             case DEBATE -> "변론 중";
             case RESULT -> "결과 표시 중";
         };
+    }
+
+    private record RankingEntry(Candidate candidate, String id, String name, int wins, long votes, int lastRoundSize) {
+        private RankingEntry withWin(int roundSize) {
+            return new RankingEntry(candidate, id, name, wins + 1, votes, roundSize);
+        }
+
+        private RankingEntry withLoss(int roundSize) {
+            return new RankingEntry(candidate, id, name, wins, votes, roundSize);
+        }
+
+        private RankingEntry withVotes(long addedVotes) {
+            return new RankingEntry(candidate, id, name, wins, votes + Math.max(0L, addedVotes), lastRoundSize);
+        }
+
+        private String resultLabel(int rank) {
+            if (rank == 1) {
+                return "우승";
+            }
+            if (rank == 2) {
+                return "준우승";
+            }
+            return lastRoundSize + "강";
+        }
     }
 
 }

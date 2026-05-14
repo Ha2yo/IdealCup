@@ -28,10 +28,16 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Set;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.BiConsumer;
 import java.util.function.Consumer;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+import java.util.zip.CRC32;
 import java.util.zip.Deflater;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipInputStream;
@@ -47,19 +53,21 @@ public final class ResourcePackBuilder {
     private static final String SPLIT_PACK_FOLDER = "resourcepack-parts";
     private static final String BASE_SPLIT_PACK_FILE = "idealcup-base.zip";
     private static final String MEDIA_SPLIT_PACK_PREFIX = "idealcup-media-";
-    private static final long SPLIT_PACK_MAX_BYTES = 150L * 1024L * 1024L;
+    private static final long SPLIT_PACK_MAX_BYTES = 180L * 1024L * 1024L;
     private static final String MANIFEST_PATH = "candidates.yml";
     private static final List<String> VIDEO_EXTENSIONS = List.of("mp4", "mkv", "mov");
     private static final List<String> SOURCE_EXTENSIONS = List.of("png", "jpg", "jpeg", "webp", "gif", "mp4", "mkv", "mov");
-    private static final int DEFAULT_IMAGE_SIZE = 128;
+    public static final List<Integer> ALLOWED_ANIMATION_FPS = List.of(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20);
+    private static final int DEFAULT_IMAGE_SIZE = 256;
+    private static final int DEFAULT_ANIMATION_FPS = 5;
+    private static final int PACK_ICON_SIZE = 128;
     private static final int MAX_GIF_FRAMES = 80;
-    private static final int ANIMATION_FPS = 5;
-    private static final int ANIMATION_FRAME_TICKS = 20 / ANIMATION_FPS;
     private static final String FFMPEG_DOWNLOAD_URL = "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-gpl.zip";
     private static final Pattern ANIMATION_SIZE_PATTERN = Pattern.compile("\"(width|height)\"\\s*:\\s*(\\d+)");
 
     private final JavaPlugin plugin;
     private int maxImageSize = DEFAULT_IMAGE_SIZE;
+    private int animationFps = DEFAULT_ANIMATION_FPS;
 
     public ResourcePackBuilder(JavaPlugin plugin) {
         this.plugin = plugin;
@@ -81,7 +89,20 @@ public final class ResourcePackBuilder {
     }
 
     public BuildResult build(int maxImageSize, Consumer<String> progress, BiConsumer<String, String> warningProgress) {
+        return build(maxImageSize, 0, progress, warningProgress);
+    }
+
+    public BuildResult build(int maxImageSize, int workerCount, Consumer<String> progress, BiConsumer<String, String> warningProgress) {
+        return build(maxImageSize, workerCount, DEFAULT_ANIMATION_FPS, progress, warningProgress);
+    }
+
+    public BuildResult build(int maxImageSize, int workerCount, int animationFps, Consumer<String> progress, BiConsumer<String, String> warningProgress) {
+        return build(maxImageSize, workerCount, animationFps, null, progress, warningProgress);
+    }
+
+    public BuildResult build(int maxImageSize, int workerCount, int animationFps, String packDescription, Consumer<String> progress, BiConsumer<String, String> warningProgress) {
         this.maxImageSize = Math.max(1, maxImageSize);
+        this.animationFps = ALLOWED_ANIMATION_FPS.contains(animationFps) ? animationFps : DEFAULT_ANIMATION_FPS;
         List<String> warnings = new ArrayList<>();
         File sourceFolder = new File(plugin.getDataFolder(), SOURCE_FOLDER);
         if (!sourceFolder.isDirectory()) {
@@ -109,79 +130,42 @@ public final class ResourcePackBuilder {
         try {
             registerImageReaders();
             recreateFolder(buildFolder.toPath());
-            writePackMeta(sourceFolder, buildFolder);
+            writePackMeta(sourceFolder, buildFolder, packDescription);
+            copyPackIcon(sourceFolder, buildFolder);
             Files.copy(manifestFile.toPath(), new File(buildFolder, MANIFEST_PATH).toPath(), java.nio.file.StandardCopyOption.REPLACE_EXISTING);
 
             int builtCandidates = 0;
-            int processedCandidates = 0;
             List<String> soundModels = new ArrayList<>();
-            for (String id : candidateIds) {
-                processedCandidates++;
-                String imagePath = imagePath(id);
-                File imageFile = sourceImageFile(sourceFolder, id);
-                if (!imageFile.isFile()) {
-                    String warning = "후보 " + id + " 제외: images/" + id + ".png, .jpg, .jpeg, .webp, .gif, .mp4, .mkv, .mov 파일이 없습니다.";
-                    warnings.add(warning);
-                    warningProgress.accept("미디어 변환 중: " + processedCandidates + "/" + totalCandidates + " (" + id + ")", warning);
-                    continue;
+            AtomicInteger processedCandidates = new AtomicInteger();
+            ExecutorService executor = Executors.newFixedThreadPool(buildWorkerCount(totalCandidates, workerCount));
+            List<Future<CandidateBuildResult>> futures = new ArrayList<>();
+            try {
+                for (String id : candidateIds) {
+                    futures.add(executor.submit(() -> processCandidate(sourceFolder, buildFolder, id, totalCandidates, processedCandidates, progress, warningProgress)));
                 }
-
-                try {
-                    if (isVideoFile(imageFile)) {
-                        writeVideoCandidateTexture(sourceFolder, buildFolder, id, imageFile, imagePath);
-                        writeCandidateModels(buildFolder, id);
-                        if (writeCandidateSound(sourceFolder, buildFolder, id, imageFile)) {
-                            soundModels.add(modelName(id));
-                        }
-                        progress.accept("미디어 변환 중: " + processedCandidates + "/" + totalCandidates + " (" + id + ")");
+                for (Future<CandidateBuildResult> future : futures) {
+                    CandidateBuildResult result = future.get();
+                    if (result.warning() != null) {
+                        warnings.add(result.warning());
+                    }
+                    if (result.built()) {
                         builtCandidates++;
-                        continue;
                     }
-
-                    if (isAnimatedPngSource(imageFile)) {
-                        BufferedImage image = ImageIO.read(imageFile);
-                        if (image == null) {
-                            String warning = "후보 " + id + " 제외: 올바른 이미지가 아닙니다. " + sourceImagePath(sourceFolder, imageFile);
-                            warnings.add(warning);
-                            warningProgress.accept("미디어 변환 중: " + processedCandidates + "/" + totalCandidates + " (" + id + ")", warning);
-                            continue;
-                        }
-                        writeAnimatedPngSource(buildFolder, id, imageFile);
-                        writeCandidateModels(buildFolder, id);
-                        if (writeCandidateSound(sourceFolder, buildFolder, id, imageFile)) {
-                            soundModels.add(modelName(id));
-                        }
-                        progress.accept("미디어 변환 중: " + processedCandidates + "/" + totalCandidates + " (" + id + ")");
-                        builtCandidates++;
-                        continue;
+                    if (result.soundModel() != null) {
+                        soundModels.add(result.soundModel());
                     }
-
-                    BufferedImage image = ImageIO.read(imageFile);
-                    if (image == null) {
-                        String warning = "후보 " + id + " 제외: 올바른 이미지가 아닙니다. " + sourceImagePath(sourceFolder, imageFile);
-                        warnings.add(warning);
-                        warningProgress.accept("미디어 변환 중: " + processedCandidates + "/" + totalCandidates + " (" + id + ")", warning);
-                        continue;
-                    }
-                    BufferedImage outputImage = normalizeImage(image);
-                    writePngImage(buildFolder, imagePath, outputImage);
-                    writeStaticCandidateTexture(buildFolder, id, outputImage);
-                    if (isGifFile(imageFile)) {
-                        writeAnimatedCandidateTexture(buildFolder, id, imageFile, outputImage);
-                    } else {
-                        writeCandidateTexture(buildFolder, id, outputImage);
-                    }
-                    writeCandidateModels(buildFolder, id);
-                    if (writeCandidateSound(sourceFolder, buildFolder, id, imageFile)) {
-                        soundModels.add(modelName(id));
-                    }
-                    progress.accept("미디어 변환 중: " + processedCandidates + "/" + totalCandidates + " (" + id + ")");
-                    builtCandidates++;
-                } catch (IOException exception) {
-                    String warning = "후보 " + id + " 제외: " + exception.getMessage();
-                    warnings.add(warning);
-                    warningProgress.accept("미디어 변환 중: " + processedCandidates + "/" + totalCandidates + " (" + id + ")", warning);
                 }
+            } catch (InterruptedException exception) {
+                Thread.currentThread().interrupt();
+                warnings.add("미디어 변환이 중단되었습니다.");
+                cleanupBuildFolder(buildFolder.toPath(), warnings);
+                return new BuildResult(false, 0, warnings);
+            } catch (ExecutionException exception) {
+                warnings.add("미디어 변환 중 오류가 발생했습니다: " + exception.getCause().getMessage());
+                cleanupBuildFolder(buildFolder.toPath(), warnings);
+                return new BuildResult(false, 0, warnings);
+            } finally {
+                executor.shutdownNow();
             }
 
             if (builtCandidates == 0) {
@@ -191,14 +175,13 @@ public final class ResourcePackBuilder {
             }
 
             writeSoundsJson(buildFolder, soundModels);
-            writePackMeta(sourceFolder, buildFolder);
+            writePackMeta(sourceFolder, buildFolder, packDescription);
+            copyPackIcon(sourceFolder, buildFolder);
             Files.copy(manifestFile.toPath(), new File(buildFolder, MANIFEST_PATH).toPath(), java.nio.file.StandardCopyOption.REPLACE_EXISTING);
             zipFolder(buildFolder.toPath(), resourcePackFile().toPath());
             progress.accept("resourcepack.zip 저장 완료");
             int splitPackCount = zipSplitResourcePacks(buildFolder.toPath(), candidateIds, warnings);
-            progress.accept("resourcepack-parts 저장 완료: " + splitPackCount + "개 (팩당 최대 150MB)");
-            zipFolder(sourceFolder.toPath(), sourceBackupFile().toPath());
-            progress.accept("resourcepack-src 원본 백업 저장 완료");
+            progress.accept("resourcepack-parts 저장 완료: " + splitPackCount + "개 (팩당 최대 180MB)");
             cleanupBuildFolder(buildFolder.toPath(), warnings);
             return new BuildResult(true, builtCandidates, warnings);
         } catch (IOException exception) {
@@ -211,6 +194,80 @@ public final class ResourcePackBuilder {
     public BuildResult unpack(boolean force) {
         return unpack(force, message -> {
         });
+    }
+
+    private CandidateBuildResult processCandidate(
+            File sourceFolder,
+            File buildFolder,
+            String id,
+            int totalCandidates,
+            AtomicInteger processedCandidates,
+            Consumer<String> progress,
+            BiConsumer<String, String> warningProgress
+    ) {
+        String imagePath = imagePath(id);
+        File imageFile = sourceImageFile(sourceFolder, id);
+        int processed = processedCandidates.incrementAndGet();
+        String progressMessage = "미디어 변환 중: " + processed + "/" + totalCandidates + " (" + id + ")";
+        if (!imageFile.isFile()) {
+            String warning = "후보 " + id + " 제외: images/" + id + ".png, .jpg, .jpeg, .webp, .gif, .mp4, .mkv, .mov 파일이 없습니다.";
+            warningProgress.accept(progressMessage, warning);
+            return new CandidateBuildResult(false, null, warning);
+        }
+
+        try {
+            if (isVideoFile(imageFile)) {
+                writeVideoCandidateTexture(sourceFolder, buildFolder, id, imageFile, imagePath);
+                writeCandidateModels(buildFolder, id);
+                String soundModel = writeCandidateSound(sourceFolder, buildFolder, id, imageFile) ? modelName(id) : null;
+                progress.accept(progressMessage);
+                return new CandidateBuildResult(true, soundModel, null);
+            }
+
+            if (isAnimatedPngSource(imageFile)) {
+                BufferedImage image = ImageIO.read(imageFile);
+                if (image == null) {
+                    String warning = "후보 " + id + " 제외: 올바른 이미지가 아닙니다. " + sourceImagePath(sourceFolder, imageFile);
+                    warningProgress.accept(progressMessage, warning);
+                    return new CandidateBuildResult(false, null, warning);
+                }
+                writeAnimatedPngSource(buildFolder, id, imageFile);
+                writeCandidateModels(buildFolder, id);
+                String soundModel = writeCandidateSound(sourceFolder, buildFolder, id, imageFile) ? modelName(id) : null;
+                progress.accept(progressMessage);
+                return new CandidateBuildResult(true, soundModel, null);
+            }
+
+            BufferedImage image = ImageIO.read(imageFile);
+            if (image == null) {
+                String warning = "후보 " + id + " 제외: 올바른 이미지가 아닙니다. " + sourceImagePath(sourceFolder, imageFile);
+                warningProgress.accept(progressMessage, warning);
+                return new CandidateBuildResult(false, null, warning);
+            }
+            BufferedImage outputImage = normalizeImage(image);
+            writePngImage(buildFolder, imagePath, outputImage);
+            writeStaticCandidateTexture(buildFolder, id, outputImage);
+            if (isGifFile(imageFile)) {
+                writeAnimatedCandidateTexture(buildFolder, id, imageFile, outputImage);
+            } else {
+                writeCandidateTexture(buildFolder, id, outputImage);
+            }
+            writeCandidateModels(buildFolder, id);
+            String soundModel = writeCandidateSound(sourceFolder, buildFolder, id, imageFile) ? modelName(id) : null;
+            progress.accept(progressMessage);
+            return new CandidateBuildResult(true, soundModel, null);
+        } catch (IOException exception) {
+            String warning = "후보 " + id + " 제외: " + exception.getMessage();
+            warningProgress.accept(progressMessage, warning);
+            return new CandidateBuildResult(false, null, warning);
+        }
+    }
+
+    private int buildWorkerCount(int totalCandidates, int requestedWorkerCount) {
+        if (requestedWorkerCount > 0) {
+            return Math.max(1, Math.min(Math.min(requestedWorkerCount, 8), totalCandidates));
+        }
+        return Math.max(1, Math.min(2, totalCandidates));
     }
 
     public BuildResult unpack(boolean force, Consumer<String> progress) {
@@ -491,7 +548,7 @@ public final class ResourcePackBuilder {
                 videoFile.getAbsolutePath(),
                 "-vn",
                 "-af",
-                "loudnorm=I=-16:TP=-1.5:LRA=11",
+                "loudnorm=I=-14:TP=-1.0:LRA=9",
                 "-c:a",
                 "libvorbis",
                 "-q:a",
@@ -615,7 +672,7 @@ public final class ResourcePackBuilder {
     }
 
     private String videoFrameFilter() {
-        return "fps=" + ANIMATION_FPS
+        return "fps=" + animationFps
                 + ",scale=w='if(gte(iw,ih),min(iw," + maxImageSize + "),-1)'"
                 + ":h='if(gt(ih,iw),min(ih," + maxImageSize + "),-1)'";
     }
@@ -636,7 +693,7 @@ public final class ResourcePackBuilder {
         return drawRgbImage(image.getSubimage(0, 0, width, height), width, height);
     }
 
-    private String resolveFfmpeg() throws IOException {
+    private synchronized String resolveFfmpeg() throws IOException {
         File toolFolder = new File(plugin.getDataFolder(), "tools");
         File ffmpegFile = new File(toolFolder, "ffmpeg.exe");
         if (ffmpegFile.isFile()) {
@@ -734,7 +791,7 @@ public final class ResourcePackBuilder {
             if (index > 0) {
                 framesJson.append(",\n");
             }
-            framesJson.append("      { \"index\": ").append(index).append(", \"time\": ").append(ANIMATION_FRAME_TICKS).append(" }");
+            framesJson.append("      { \"index\": ").append(index).append(", \"time\": ").append(animationFrameTicks(index)).append(" }");
         }
         return """
                 {
@@ -748,6 +805,12 @@ public final class ResourcePackBuilder {
                   }
                 }
                 """.formatted(frameWidth, frameHeight, framesJson);
+    }
+
+    private int animationFrameTicks(int frameIndex) {
+        int startTick = (int) Math.round(frameIndex * 20.0D / animationFps);
+        int endTick = (int) Math.round((frameIndex + 1) * 20.0D / animationFps);
+        return Math.max(1, endTick - startTick);
     }
 
     private List<BufferedImage> readGifFrames(File gifFile, int width, int height) throws IOException {
@@ -804,17 +867,57 @@ public final class ResourcePackBuilder {
         return "minecraft:item/idealcup/" + modelName;
     }
 
-    private void writePackMeta(File sourceFolder, File buildFolder) throws IOException {
+    private void writePackMeta(File sourceFolder, File buildFolder, String packDescription) throws IOException {
         File buildPackMeta = new File(buildFolder, "pack.mcmeta");
+        String description = packDescription == null || packDescription.isBlank() ? "IdealCup candidate pack" : packDescription;
         String json = """
                 {
                   "pack": {
                     "pack_format": 69,
-                    "description": "IdealCup candidate pack"
+                    "description": "%s"
                   }
                 }
-                """;
+                """.formatted(jsonEscape(description));
         Files.writeString(buildPackMeta.toPath(), json, StandardCharsets.UTF_8);
+    }
+
+    private void copyPackIcon(File sourceFolder, File buildFolder) throws IOException {
+        File sourcePackIcon = new File(sourceFolder, "pack.png");
+        if (!sourcePackIcon.isFile()) {
+            return;
+        }
+        BufferedImage image = ImageIO.read(sourcePackIcon);
+        if (image == null) {
+            throw new IOException("resourcepack-src/pack.png 파일이 올바른 이미지가 아닙니다.");
+        }
+        ImageIO.write(normalizePackIcon(image), "png", new File(buildFolder, "pack.png"));
+    }
+
+    private BufferedImage normalizePackIcon(BufferedImage image) {
+        int width = image.getWidth();
+        int height = image.getHeight();
+        double scale = Math.min((double) PACK_ICON_SIZE / width, (double) PACK_ICON_SIZE / height);
+        int outputWidth = Math.max(1, (int) Math.round(width * scale));
+        int outputHeight = Math.max(1, (int) Math.round(height * scale));
+        int x = (PACK_ICON_SIZE - outputWidth) / 2;
+        int y = (PACK_ICON_SIZE - outputHeight) / 2;
+
+        BufferedImage output = new BufferedImage(PACK_ICON_SIZE, PACK_ICON_SIZE, BufferedImage.TYPE_INT_ARGB);
+        Graphics2D graphics = output.createGraphics();
+        graphics.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_BILINEAR);
+        graphics.setRenderingHint(RenderingHints.KEY_RENDERING, RenderingHints.VALUE_RENDER_QUALITY);
+        graphics.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+        graphics.drawImage(image, x, y, outputWidth, outputHeight, null);
+        graphics.dispose();
+        return output;
+    }
+
+    private String jsonEscape(String value) {
+        return value
+                .replace("\\", "\\\\")
+                .replace("\"", "\\\"")
+                .replace("\n", "\\n")
+                .replace("\r", "\\r");
     }
 
     private void zipFolder(Path sourceFolder, Path targetZip) throws IOException {
@@ -828,7 +931,7 @@ public final class ResourcePackBuilder {
                         continue;
                     }
                     String entryName = sourceFolder.relativize(path).toString().replace('\\', '/');
-                    zipOutputStream.putNextEntry(new ZipEntry(entryName));
+                    zipOutputStream.putNextEntry(zipEntry(sourceFolder.relativize(path), path, entryName));
                     Files.copy(path, zipOutputStream);
                     zipOutputStream.closeEntry();
                 }
@@ -877,7 +980,7 @@ public final class ResourcePackBuilder {
                     currentPaths.clear();
                     currentSize = 0L;
                 }
-                warnings.add("후보 " + group.id() + " 리소스가 150MB를 초과해서 단독 분할팩으로 저장됩니다.");
+                warnings.add("후보 " + group.id() + " 리소스가 180MB를 초과해서 단독 분할팩으로 저장됩니다.");
                 zipSelectedPaths(buildRoot, splitFolder.resolve(splitPackName(mediaIndex++)), withRequiredPaths(requiredPaths, group.paths()));
                 writtenPacks++;
                 continue;
@@ -942,7 +1045,7 @@ public final class ResourcePackBuilder {
 
     private boolean isClientPackPath(Path path) {
         String entryName = path.toString().replace('\\', '/');
-        return entryName.equals("pack.mcmeta") || entryName.startsWith("assets/");
+        return entryName.equals("pack.mcmeta") || entryName.equals("pack.png") || entryName.startsWith("assets/");
     }
 
     private List<Path> splitPackRequiredPaths(Path buildRoot) {
@@ -950,6 +1053,10 @@ public final class ResourcePackBuilder {
         Path packMeta = Path.of("pack.mcmeta");
         if (Files.isRegularFile(buildRoot.resolve(packMeta))) {
             paths.add(packMeta);
+        }
+        Path packIcon = Path.of("pack.png");
+        if (Files.isRegularFile(buildRoot.resolve(packIcon))) {
+            paths.add(packIcon);
         }
         Path sounds = Path.of("assets/idealcup/sounds.json");
         if (Files.isRegularFile(buildRoot.resolve(sounds))) {
@@ -975,11 +1082,45 @@ public final class ResourcePackBuilder {
                     continue;
                 }
                 String entryName = relativePath.toString().replace('\\', '/');
-                zipOutputStream.putNextEntry(new ZipEntry(entryName));
+                zipOutputStream.putNextEntry(zipEntry(relativePath, sourcePath, entryName));
                 Files.copy(sourcePath, zipOutputStream);
                 zipOutputStream.closeEntry();
             }
         }
+    }
+
+    private ZipEntry zipEntry(Path relativePath, Path sourcePath, String entryName) throws IOException {
+        ZipEntry entry = new ZipEntry(entryName);
+        if (shouldStoreZipEntry(relativePath)) {
+            entry.setMethod(ZipEntry.STORED);
+            entry.setSize(Files.size(sourcePath));
+            entry.setCompressedSize(entry.getSize());
+            entry.setCrc(zipCrc32(sourcePath));
+        }
+        return entry;
+    }
+
+    private boolean shouldStoreZipEntry(Path relativePath) {
+        String fileName = relativePath.getFileName().toString().toLowerCase(Locale.ROOT);
+        return fileName.endsWith(".png")
+                || fileName.endsWith(".ogg")
+                || fileName.endsWith(".webp")
+                || fileName.endsWith(".gif")
+                || fileName.endsWith(".mp4")
+                || fileName.endsWith(".mkv")
+                || fileName.endsWith(".mov");
+    }
+
+    private long zipCrc32(Path path) throws IOException {
+        CRC32 crc32 = new CRC32();
+        try (InputStream inputStream = Files.newInputStream(path)) {
+            byte[] buffer = new byte[8192];
+            int read;
+            while ((read = inputStream.read(buffer)) >= 0) {
+                crc32.update(buffer, 0, read);
+            }
+        }
+        return crc32.getValue();
     }
 
     private long pathSize(Path buildRoot, List<Path> paths) throws IOException {
@@ -1191,6 +1332,9 @@ public final class ResourcePackBuilder {
     }
 
     public record BuildResult(boolean success, int candidates, List<String> warnings) {
+    }
+
+    private record CandidateBuildResult(boolean built, String soundModel, String warning) {
     }
 
     private record CandidatePackGroup(String id, List<Path> paths, long size) {

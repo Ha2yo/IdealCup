@@ -5,7 +5,7 @@ api-version: '1.21'
 commands:
   idealcup:
     description: 이상형 월드컵 관리 명령어
-    usage: /idealcup <start <월드컵이름> <참가자수>|stop|buildpack|unpack|status|forcewin|play|set>
+    usage: /idealcup <start <월드컵이름> <참가자수>|stop|buildpack|unpack|status|forcewin|play|set|result>
     aliases: [icup]
   마우스:
     description: 이상형 월드컵 마우스 아이템 지급
