@@ -1,7 +1,10 @@
 package org.ha2yo.idealCup.visual;
 
+import net.kyori.adventure.key.Key;
 import net.kyori.adventure.text.Component;
 import net.kyori.adventure.text.format.NamedTextColor;
+import net.kyori.adventure.text.format.TextColor;
+import net.kyori.adventure.text.serializer.plain.PlainTextComponentSerializer;
 import org.ha2yo.idealCup.model.Candidate;
 import org.ha2yo.idealCup.game.VoteChoice;
 import org.bukkit.Color;
@@ -26,7 +29,9 @@ import org.joml.AxisAngle4f;
 import org.joml.Vector3f;
 
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 
 public final class CandidateDisplay {
@@ -34,10 +39,36 @@ public final class CandidateDisplay {
     private static final double CLEAR_HORIZONTAL_MARGIN = 8.0D;
     private static final double CLEAR_VERTICAL_MARGIN = 4.0D;
     private static final double CLEAR_DEPTH_MARGIN = 4.0D;
+    private static final double BOARD_BACKGROUND_DEPTH = 0.01D;
+    private static final double IMAGE_DEPTH = 0.05D;
+    private static final double IMAGE_FRONT_DEPTH = 0.06D;
+    private static final double TEXT_DEPTH = 0.085D;
+    private static final Key TITLE_SHADE_FONT = Key.key("idealcup", "title_shade");
+    private static final String TITLE_SHADE_GLYPH = "\uE000";
+    private static final double TITLE_SHADE_DEPTH = 0.11D;
+    private static final double TITLE_SHADE_HEIGHT = 0.30D;
+    private static final double TITLE_SHADE_GLYPH_WIDTH = 0.64D;
+    private static final double TITLE_SHADE_GLYPH_HEIGHT = 0.16D;
+    private static final int TITLE_SHADE_SEGMENTS = 7;
+    private static final double TITLE_BAR_DEPTH = BOARD_BACKGROUND_DEPTH + 0.001D;
+    private static final double TITLE_TEXT_DEPTH = TEXT_DEPTH;
+    private static final double TEXT_OUTLINE_OFFSET = 0.035D;
+    private static final double TEXT_OUTLINE_DEPTH_OFFSET = 0.012D;
+    private static final double VS_SCALE_MULTIPLIER = 1.4D;
+    private static final double VS_Y_DROP_RATIO = 0.04D;
+    private static final double VS_OUTLINE_MULTIPLIER = 1.35D;
+    private static final double MATCH_NAME_CENTER_X_RATIO = 0.17D;
+    private static final double MATCH_NAME_Y_DROP_RATIO = 0.08D;
+    private static final double RANKING_TEXT_EDGE_GAP = 0.32D;
+    private static final double RANKING_LABEL_EDGE_GAP = 0.85D;
+    private static final double RANKING_STAT_LINE_GAP = 0.75D;
+    private static final double RANKING_NEXT_RANK_GAP = 2.5D;
+    private static final int RANKING_REMOVE_AFTER_EXIT_TICKS = 60;
 
     private final JavaPlugin plugin;
     private final List<Entity> entities = new ArrayList<>();
     private final List<CandidateImage> candidateImages = new ArrayList<>();
+    private final Map<TextDisplay, List<TextDisplay>> textOutlines = new HashMap<>();
     private BlockDisplay background;
     private BukkitTask animationTask;
 
@@ -91,27 +122,27 @@ public final class CandidateDisplay {
         cancelAnimationTask();
         clearEntities();
 
-        double candidateAreaWidth = board.width() / 2.0D;
-        double candidateAreaHeight = board.height();
-        DisplaySize leftSize = fitImageSize(left, candidateAreaWidth, candidateAreaHeight);
-        DisplaySize rightSize = fitImageSize(right, candidateAreaWidth, candidateAreaHeight);
         TextLayout textLayout = textLayout(board);
         String title = cupName + " " + roundSize + "강   " + matchNumber + "/" + totalMatches;
+        double titleScale = fitTitleScale(board, textLayout, title);
+        double candidateAreaWidth = board.width() / 2.0D;
+        DisplaySize leftSize = fitImageSize(left, candidateAreaWidth, textLayout.contentHeight());
+        DisplaySize rightSize = fitImageSize(right, candidateAreaWidth, textLayout.contentHeight());
         double leftX = candidateX(true, leftSize);
         double rightX = candidateX(false, rightSize);
         ensureBackground(board);
-        spawnImage(left, board.locationAt(leftX, 0.0D, 0.05D), board.yaw(), leftSize, 0, false);
-        spawnImage(right, board.locationAt(rightX, 0.0D, 0.05D), board.yaw(), rightSize, 0, false);
-        spawnTitle(board, textLayout, title);
-        spawnText("VS", board.locationAt(0.0D, 0.0D, 0.13D), board.yaw(), textLayout.vsScale(), null);
+        spawnImage(left, board.locationAt(leftX, textLayout.contentY(), IMAGE_DEPTH), board.yaw(), leftSize, 0, false);
+        spawnImage(right, board.locationAt(rightX, textLayout.contentY(), IMAGE_DEPTH), board.yaw(), rightSize, 0, false);
+        spawnTitle(board, textLayout, title, titleScale);
+        spawnText(vsText(), board.locationAt(0.0D, textLayout.contentY() - board.height() * VS_Y_DROP_RATIO, TEXT_DEPTH), board.yaw(), textLayout.vsScale() * VS_SCALE_MULTIPLIER, null, VS_OUTLINE_MULTIPLIER);
         double leftNameScale = fitTextScale(left.name(), textLayout.nameScale(), board.width() * 0.38D);
         double rightNameScale = fitTextScale(right.name(), textLayout.nameScale(), board.width() * 0.38D);
-        Location leftNameLocation = board.locationAt(leftX, textLayout.nameY(), 0.13D);
-        Location rightNameLocation = board.locationAt(rightX, textLayout.nameY(), 0.13D);
+        Location leftNameLocation = fixedNameLocation(board, textLayout, true);
+        Location rightNameLocation = fixedNameLocation(board, textLayout, false);
         TextDisplay leftText = spawnText(left.name(), leftNameLocation, board.yaw(), leftNameScale, null);
         TextDisplay rightText = spawnText(right.name(), rightNameLocation, board.yaw(), rightNameScale, null);
-        attachCandidateText(left, leftText, leftNameLocation, board.locationAt(leftX, -board.height() / 2.0D + 0.15D, 0.13D), leftNameScale);
-        attachCandidateText(right, rightText, rightNameLocation, board.locationAt(rightX, -board.height() / 2.0D + 0.15D, 0.13D), rightNameScale);
+        attachCandidateText(left, leftText, leftNameLocation, fixedLoweredNameLocation(board, true), leftNameScale);
+        attachCandidateText(right, rightText, rightNameLocation, fixedLoweredNameLocation(board, false), rightNameScale);
     }
 
     public void showMatchResult(Candidate left, Candidate right, Candidate winner, String cupName, int roundSize, int matchNumber, int totalMatches) {
@@ -125,24 +156,24 @@ public final class CandidateDisplay {
         Candidate loser = winner.equals(left) ? right : left;
         boolean winnerStartedLeft = winner.equals(left);
         boolean loserStartedLeft = loser.equals(left);
-        double candidateAreaWidth = board.width() / 2.0D;
-        double candidateAreaHeight = board.height();
-        DisplaySize loserSize = fitImageSize(loser, candidateAreaWidth, candidateAreaHeight);
-        DisplaySize winnerStartSize = fitImageSize(winner, candidateAreaWidth, candidateAreaHeight);
-        DisplaySize winnerEndSize = fitImageSize(winner, board.width(), board.height());
         TextLayout textLayout = textLayout(board);
         String title = cupName + " " + roundSize + "강   " + matchNumber + "/" + totalMatches;
+        double titleScale = fitTitleScale(board, textLayout, title);
+        double candidateAreaWidth = board.width() / 2.0D;
+        DisplaySize loserSize = fitImageSize(loser, candidateAreaWidth, textLayout.contentHeight());
+        DisplaySize winnerStartSize = fitImageSize(winner, candidateAreaWidth, textLayout.contentHeight());
+        DisplaySize winnerEndSize = fitImageSize(winner, board.width(), textLayout.contentHeight());
         double loserStart = candidateX(loserStartedLeft, loserSize);
         double winnerStart = candidateX(winnerStartedLeft, winnerStartSize);
         ensureBackground(board);
 
-        ItemDisplay loserDisplay = spawnImage(loser, board.locationAt(loserStart, 0.0D, 0.05D), board.yaw(), loserSize, 2, false);
-        ItemDisplay winnerDisplay = spawnImage(winner, board.locationAt(winnerStart, 0.0D, 0.06D), board.yaw(), winnerStartSize, 2, false);
+        ItemDisplay loserDisplay = spawnImage(loser, board.locationAt(loserStart, textLayout.contentY(), IMAGE_DEPTH), board.yaw(), loserSize, 2, false);
+        ItemDisplay winnerDisplay = spawnImage(winner, board.locationAt(winnerStart, textLayout.contentY(), IMAGE_FRONT_DEPTH), board.yaw(), winnerStartSize, 2, false);
         double loserNameScale = fitTextScale(loser.name(), textLayout.nameScale(), board.width() * 0.38D);
         double winnerNameScale = fitTextScale(winner.name(), textLayout.nameScale(), board.width() * 0.38D);
-        TextDisplay loserText = spawnText(loser.name(), board.locationAt(loserStart, textLayout.nameY(), 0.13D), board.yaw(), loserNameScale, null);
-        TextDisplay winnerText = spawnText(winner.name(), board.locationAt(winnerStart, textLayout.nameY(), 0.14D), board.yaw(), winnerNameScale, null);
-        spawnTitle(board, textLayout, title);
+        TextDisplay loserText = spawnText(loser.name(), board.locationAt(loserStart, textLayout.nameY(), TEXT_DEPTH), board.yaw(), loserNameScale, null);
+        TextDisplay winnerText = spawnText(winner.name(), board.locationAt(winnerStart, textLayout.nameY(), TEXT_DEPTH), board.yaw(), winnerNameScale, null);
+        spawnTitle(board, textLayout, title, titleScale);
 
         int animationFrames = 30;
         animationTask = new BukkitRunnable() {
@@ -156,10 +187,10 @@ public final class CandidateDisplay {
                 double xLoser = lerp(loserStart, loserEnd, progress);
                 double xWinner = lerp(winnerStart, 0.0D, progress);
                 DisplaySize winnerSize = lerpSize(winnerStartSize, winnerEndSize, progress);
-                moveImage(loserDisplay, board.locationAt(xLoser, 0.0D, 0.05D), loserSize);
-                moveImage(winnerDisplay, board.locationAt(xWinner, 0.0D, 0.06D), winnerSize);
-                moveText(loserText, board.locationAt(xLoser, textLayout.nameY(), 0.13D), loserNameScale);
-                moveText(winnerText, board.locationAt(xWinner, textLayout.nameY(), 0.14D), winnerNameScale);
+                moveImage(loserDisplay, board.locationAt(xLoser, textLayout.contentY(), IMAGE_DEPTH), loserSize);
+                moveImage(winnerDisplay, board.locationAt(xWinner, textLayout.contentY(), IMAGE_FRONT_DEPTH), winnerSize);
+                moveText(loserText, board.locationAt(xLoser, textLayout.nameY(), TEXT_DEPTH), loserNameScale);
+                moveText(winnerText, board.locationAt(xWinner, textLayout.nameY(), TEXT_DEPTH), winnerNameScale);
                 frame++;
                 if (frame >= animationFrames) {
                     animationTask = null;
@@ -178,13 +209,14 @@ public final class CandidateDisplay {
         clearEntities();
         TextLayout textLayout = textLayout(board);
         String title = cupName + " " + initialSize + "\uac15 \ucd5c\uc885 \uc6b0\uc2b9";
+        double titleScale = fitTitleScale(board, textLayout, title);
         ensureBackground(board);
-        spawnImage(winner, board.locationAt(0.0D, 0.0D, 0.05D), board.yaw(), fitImageSize(winner, board.width(), board.height()), 0, false);
-        spawnTitle(board, textLayout, title);
+        spawnImage(winner, board.locationAt(0.0D, textLayout.contentY(), IMAGE_DEPTH), board.yaw(), fitImageSize(winner, board.width(), textLayout.contentHeight()), 0, false);
+        spawnTitle(board, textLayout, title, titleScale);
         double nameScale = fitTextScale(winner.name(), textLayout.nameScale(), board.width() * 0.72D);
-        Location nameLocation = board.locationAt(0.0D, -board.height() / 2.0D + board.height() / 5.0D, 0.13D);
+        Location nameLocation = board.locationAt(0.0D, -board.height() / 2.0D + board.height() / 5.0D, TEXT_DEPTH);
         TextDisplay nameText = spawnText(winner.name(), nameLocation, board.yaw(), nameScale, null);
-        attachCandidateText(winner, nameText, nameLocation, board.locationAt(0.0D, -board.height() / 2.0D + 0.15D, 0.13D), nameScale);
+        attachCandidateText(winner, nameText, nameLocation, board.locationAt(0.0D, -board.height() / 2.0D + 0.15D, TEXT_DEPTH), nameScale);
     }
 
     public void showRanking(String cupName, List<RankingRow> rows) {
@@ -199,15 +231,21 @@ public final class CandidateDisplay {
         TextLayout textLayout = textLayout(board);
         int limit = rows.size();
         if (limit <= 0) {
-            spawnText("기록이 없습니다.", board.locationAt(0.0D, 0.0D, 0.14D), board.yaw(), textLayout.nameScale(), null);
+            spawnText("기록이 없습니다.", board.locationAt(0.0D, 0.0D, TEXT_DEPTH), board.yaw(), textLayout.nameScale(), null);
             return;
         }
 
-        double rowGap = board.height() * 0.48D;
+        double rowGap = board.height() * 0.65D;
         double startY = -board.height() / 2.0D - rowGap * 0.35D;
-        double endY = startY + rowGap * limit + board.height() * 1.2D;
+        double endY = startY + (rowGap + RANKING_TEXT_EDGE_GAP + RANKING_LABEL_EDGE_GAP + RANKING_STAT_LINE_GAP + RANKING_NEXT_RANK_GAP) * limit + board.height() * 1.2D;
         List<ScrollingImage> scrollingImages = spawnRankingImages(board, rows, limit, startY, rowGap);
-        animateRankingMove(scrollingImages, endY - startY, 300 + limit * 75);
+        animateRankingMove(
+                scrollingImages,
+                endY - startY,
+                300 + limit * 100,
+                board.centerY() + board.height() / 2.0D,
+                board.centerY() - board.height() / 2.0D
+        );
     }
 
     public void showPreview(Candidate candidate) {
@@ -218,13 +256,15 @@ public final class CandidateDisplay {
         cancelAnimationTask();
         clearEntities();
         TextLayout textLayout = textLayout(board);
+        String title = "미리보기 " + candidate.id();
+        double titleScale = fitTitleScale(board, textLayout, title);
         ensureBackground(board);
-        spawnImage(candidate, board.locationAt(0.0D, 0.0D, 0.05D), board.yaw(), fitImageSize(candidate, board.width(), board.height()), 0, false);
-        spawnTitle(board, textLayout, "미리보기 " + candidate.id());
+        spawnImage(candidate, board.locationAt(0.0D, textLayout.contentY(), IMAGE_DEPTH), board.yaw(), fitImageSize(candidate, board.width(), textLayout.contentHeight()), 0, false);
+        spawnTitle(board, textLayout, title, titleScale);
         double nameScale = fitTextScale(candidate.name(), textLayout.nameScale(), board.width() * 0.72D);
-        Location nameLocation = board.locationAt(0.0D, -board.height() / 2.0D + board.height() / 5.0D, 0.13D);
+        Location nameLocation = board.locationAt(0.0D, -board.height() / 2.0D + board.height() / 5.0D, TEXT_DEPTH);
         TextDisplay nameText = spawnText(candidate.name(), nameLocation, board.yaw(), nameScale, null);
-        attachCandidateText(candidate, nameText, nameLocation, board.locationAt(0.0D, -board.height() / 2.0D + 0.15D, 0.13D), nameScale);
+        attachCandidateText(candidate, nameText, nameLocation, board.locationAt(0.0D, -board.height() / 2.0D + 0.15D, TEXT_DEPTH), nameScale);
     }
 
     public void resetPlayback() {
@@ -367,13 +407,13 @@ public final class CandidateDisplay {
             textDisplay.setBillboard(Display.Billboard.FIXED);
             textDisplay.setRotation(yaw, 0.0F);
             textDisplay.setAlignment(TextDisplay.TextAlignment.CENTER);
-            textDisplay.setShadowed(true);
+            textDisplay.setShadowed(false);
             textDisplay.setSeeThrough(false);
             textDisplay.setTextOpacity((byte) 255);
             textDisplay.setLineWidth(120);
             textDisplay.setDefaultBackground(false);
             textDisplay.setBackgroundColor(Color.fromARGB(150, 0, 0, 0));
-            textDisplay.setBrightness(new Display.Brightness(15, 15));
+            textDisplay.setBrightness(new Display.Brightness(13, 13));
             textDisplay.setTransformation(textTransform(scale));
         });
         display.addScoreboardTag(DISPLAY_TAG);
@@ -445,12 +485,17 @@ public final class CandidateDisplay {
     }
 
     private TextDisplay spawnText(Component text, Location location, float yaw, double scale, Color backgroundColor) {
+        return spawnText(text, location, yaw, scale, backgroundColor, 1.0D);
+    }
+
+    private TextDisplay spawnText(Component text, Location location, float yaw, double scale, Color backgroundColor, double outlineMultiplier) {
+        List<TextDisplay> outlines = spawnTextOutlines(text, location, yaw, scale, outlineMultiplier);
         TextDisplay display = location.getWorld().spawn(location, TextDisplay.class, textDisplay -> {
             textDisplay.text(text);
             textDisplay.setBillboard(Display.Billboard.FIXED);
             textDisplay.setRotation(yaw, 0.0F);
             textDisplay.setAlignment(TextDisplay.TextAlignment.CENTER);
-            textDisplay.setShadowed(true);
+            textDisplay.setShadowed(false);
             textDisplay.setSeeThrough(false);
             textDisplay.setTextOpacity((byte) 255);
             textDisplay.setLineWidth(400);
@@ -461,7 +506,34 @@ public final class CandidateDisplay {
         });
         display.addScoreboardTag(DISPLAY_TAG);
         entities.add(display);
+        textOutlines.put(display, outlines);
         return display;
+    }
+
+    private Component vsText() {
+        return Component.text("VS", TextColor.color(0xFFD37A));
+    }
+
+    private Component gradientText(String text, TextColor startColor, TextColor endColor) {
+        if (text.isEmpty()) {
+            return Component.empty();
+        }
+        Component result = Component.empty();
+        int last = Math.max(1, text.length() - 1);
+        for (int index = 0; index < text.length(); index++) {
+            double progress = (double) index / (double) last;
+            result = result.append(Component.text(String.valueOf(text.charAt(index)), lerpColor(startColor, endColor, progress)));
+        }
+        return result;
+    }
+
+    private TextColor lerpColor(TextColor startColor, TextColor endColor, double progress) {
+        int start = startColor.value();
+        int end = endColor.value();
+        int red = (int) Math.round(lerp((start >> 16) & 0xFF, (end >> 16) & 0xFF, progress));
+        int green = (int) Math.round(lerp((start >> 8) & 0xFF, (end >> 8) & 0xFF, progress));
+        int blue = (int) Math.round(lerp(start & 0xFF, end & 0xFF, progress));
+        return TextColor.color(red, green, blue);
     }
 
     private List<ScrollingImage> spawnRankingImages(BoardSpec board, List<RankingRow> rows, int limit, double baseY, double rowGap) {
@@ -474,11 +546,9 @@ public final class CandidateDisplay {
         double imageAreaWidth = board.width() * 0.22D;
         double imageAreaHeight = rowGap * 0.68D;
         double x = 0.0D;
-        double rankX = x - imageAreaWidth * 1.05D;
-        double winsX = x + imageAreaWidth * 1.05D;
-        double rankScale = 3.8D;
-        double winsScale = 3.5D;
-        double topY = baseY + board.height() * 0.18D;
+        double rankScale = 3.4D;
+        double winsScale = 2.8D;
+        double rankY = baseY + board.height() * 0.18D;
         for (int index = 0; index < imageCount; index++) {
             RankingRow row = rows.get(index);
             Candidate candidate = row.candidate();
@@ -486,54 +556,75 @@ public final class CandidateDisplay {
                 continue;
             }
             DisplaySize size = fitImageSize(candidate, imageAreaWidth, imageAreaHeight);
-            double y = topY - index * rowGap;
-            ItemDisplay image = spawnImage(candidate, board.locationAt(x, y, 0.08D), board.yaw(), size, 1, true);
-            Component rank = Component.text((index + 1) + "위");
-            Component label = Component.text(row.name());
+            String rank = (index + 1) + "위";
+            String label = row.name();
             double labelScale = fitTextScale(row.name(), 2.7D, imageAreaWidth * 2.15D);
-            double labelYOffset = size.height() / 2.0D + 0.9D;
-            double statY = y - 0.12D;
-            TextDisplay rankDisplay = spawnText(rank, board.locationAt(rankX, statY, 0.14D), board.yaw(), rankScale, null);
-            TextDisplay labelDisplay = spawnText(label, board.locationAt(x, y - labelYOffset, 0.14D), board.yaw(), labelScale, null);
-            TextDisplay winsDisplay = spawnText(Component.text(row.statText(), NamedTextColor.GOLD), board.locationAt(winsX, statY, 0.14D), board.yaw(), winsScale, null);
+            double y = rankY - RANKING_TEXT_EDGE_GAP - size.height() / 2.0D;
+            double labelY = y - size.height() / 2.0D - RANKING_LABEL_EDGE_GAP;
+            double statY = labelY - RANKING_STAT_LINE_GAP;
             images.add(new ScrollingImage(
-                    image,
                     candidate,
-                    rankDisplay,
-                    labelDisplay,
-                    winsDisplay,
-                    board.locationAt(x, y, 0.08D),
-                    board.locationAt(rankX, statY, 0.14D),
-                    board.locationAt(x, y - labelYOffset, 0.14D),
-                    board.locationAt(winsX, statY, 0.14D),
+                    rank,
+                    label,
+                    row.statText(),
+                    board.locationAt(x, y, IMAGE_DEPTH),
+                    board.locationAt(x, rankY, TEXT_DEPTH),
+                    board.locationAt(x, labelY, TEXT_DEPTH),
+                    board.locationAt(x, statY, TEXT_DEPTH),
                     rankScale,
                     labelScale,
                     winsScale,
                     size
             ));
+            rankY = statY - RANKING_NEXT_RANK_GAP;
         }
         return images;
     }
 
-    private void animateRankingMove(List<ScrollingImage> images, double imageYOffset, int frames) {
+    private void animateRankingMove(List<ScrollingImage> images, double imageYOffset, int frames, double boardTopY, double boardBottomY) {
         animationTask = new BukkitRunnable() {
             private int frame;
+            private final Map<ScrollingImage, Integer> exitedTicks = new HashMap<>();
 
             @Override
             public void run() {
-                if (images.stream().noneMatch(image -> image.display().isValid())) {
+                if (images.stream().allMatch(ScrollingImage::removed)) {
                     animationTask = null;
                     cancel();
                     return;
                 }
                 double progress = (double) frame / (double) Math.max(1, frames - 1);
                 for (ScrollingImage image : images) {
+                    if (image.removed()) {
+                        continue;
+                    }
                     double offset = imageYOffset * progress;
-                    moveImage(image.display(), image.imageStart().clone().add(0.0D, offset, 0.0D), image.size());
-                    updateRankingFrame(image, frame);
-                    moveText(image.rank(), image.rankStart().clone().add(0.0D, offset, 0.0D), image.rankScale());
-                    moveText(image.label(), image.labelStart().clone().add(0.0D, offset, 0.0D), image.labelScale());
-                    moveText(image.wins(), image.winsStart().clone().add(0.0D, offset, 0.0D), image.winsScale());
+                    Location imageLocation = image.imageStart().clone().add(0.0D, offset, 0.0D);
+                    if (!image.spawned() && imageLocation.getY() + image.size().height() / 2.0D >= boardBottomY) {
+                        image.spawn(offset);
+                    }
+                    if (!image.spawned()) {
+                        continue;
+                    }
+                    moveImage(image.display(), imageLocation, image.size());
+                    double imageTopY = imageLocation.getY() + image.size().height() / 2.0D;
+                    double imageBottomY = imageLocation.getY() - image.size().height() / 2.0D;
+                    if (!image.animationStarted() && imageTopY >= boardBottomY && imageBottomY <= boardTopY) {
+                        image.startAnimation(frame);
+                    }
+                    if (imageBottomY > boardTopY) {
+                        int ticks = exitedTicks.merge(image, 1, Integer::sum);
+                        if (ticks >= RANKING_REMOVE_AFTER_EXIT_TICKS) {
+                            removeRankingImage(image);
+                            continue;
+                        }
+                    }
+                    if (image.animationStarted() && imageBottomY <= boardTopY) {
+                        updateRankingFrame(image, frame - image.animationStartFrame());
+                    }
+                    moveText(image.rankDisplay(), image.rankStart().clone().add(0.0D, offset, 0.0D), image.rankScale());
+                    moveText(image.labelDisplay(), image.labelStart().clone().add(0.0D, offset, 0.0D), image.labelScale());
+                    moveText(image.winsDisplay(), image.winsStart().clone().add(0.0D, offset, 0.0D), image.winsScale());
                 }
                 frame++;
                 if (frame >= frames) {
@@ -574,29 +665,145 @@ public final class CandidateDisplay {
         return 1;
     }
 
-    private void spawnTitle(BoardSpec board, TextLayout textLayout, String title) {
-        int spaceCount = titleBackgroundSpaces(board, textLayout.titleScale());
-        spawnTextBackground(" ".repeat(spaceCount), board.locationAt(0.0D, textLayout.titleY(), 0.115D), board.yaw(), textLayout.titleScale(), Color.fromARGB(190, 0, 0, 0));
-        spawnText(title, board.locationAt(0.0D, textLayout.titleY(), 0.14D), board.yaw(), fitTextScale(title, textLayout.titleScale(), board.width() * 0.82D), null);
+    private void removeRankingImage(ScrollingImage image) {
+        removeIfValid(image.display());
+        removeIfValid(image.rankDisplay());
+        removeIfValid(image.labelDisplay());
+        removeIfValid(image.winsDisplay());
+        image.markRemoved();
     }
 
-    private void spawnTextBackground(String text, Location location, float yaw, double scale, Color backgroundColor) {
+    private void removeIfValid(Entity entity) {
+        if (entity != null && entity.isValid()) {
+            entity.remove();
+        }
+    }
+
+    private void spawnTitle(BoardSpec board, TextLayout textLayout, String title) {
+        double titleScale = fitTitleScale(board, textLayout, title);
+        spawnTitle(board, textLayout, title, titleScale);
+    }
+
+    private void spawnTitle(BoardSpec board, TextLayout textLayout, String title, double titleScale) {
+        spawnTitleBackground(board, textLayout);
+        spawnTitleText(title, board.locationAt(0.0D, textLayout.titleTextY(), TITLE_TEXT_DEPTH), board.yaw(), titleScale);
+    }
+
+    private void spawnTitleBackground(BoardSpec board, TextLayout textLayout) {
+        Location location = board.locationAt(0.0D, textLayout.titleY(), TITLE_BAR_DEPTH);
+        BlockDisplay display = location.getWorld().spawn(location, BlockDisplay.class, blockDisplay -> {
+            blockDisplay.setBlock(Material.BLACK_CONCRETE.createBlockData());
+            blockDisplay.setBillboard(Display.Billboard.FIXED);
+            blockDisplay.setRotation(board.yaw(), 0.0F);
+            blockDisplay.setTransformation(new Transformation(
+                    new Vector3f((float) (-board.width() / 2.0D), (float) (-textLayout.titleBarHeight() / 2.0D), 0.0F),
+                    new AxisAngle4f(0.0F, 0.0F, 1.0F, 0.0F),
+                    new Vector3f((float) board.width(), (float) textLayout.titleBarHeight(), 0.02F),
+                    new AxisAngle4f(0.0F, 0.0F, 1.0F, 0.0F)
+            ));
+        });
+        display.addScoreboardTag(DISPLAY_TAG);
+        entities.add(display);
+    }
+
+    private void spawnTitleShade(BoardSpec board, TextLayout textLayout, double titleScale) {
+        double segmentWidth = board.width() / TITLE_SHADE_SEGMENTS;
+        double height = Math.max(0.42D, titleScale * TITLE_SHADE_HEIGHT);
+        double y = textLayout.titleY();
+        for (int index = 0; index < TITLE_SHADE_SEGMENTS; index++) {
+            double x = -board.width() / 2.0D + segmentWidth * (index + 0.5D);
+            spawnTitleShadeSegment(board, x, y, segmentWidth * 1.03D, height);
+        }
+    }
+
+    private void spawnTitleShadeSegment(BoardSpec board, double x, double y, double width, double height) {
+        Location location = board.locationAt(x, y, TITLE_SHADE_DEPTH);
         TextDisplay display = location.getWorld().spawn(location, TextDisplay.class, textDisplay -> {
-            textDisplay.text(Component.text(text));
+            textDisplay.text(Component.text(TITLE_SHADE_GLYPH, NamedTextColor.WHITE).font(TITLE_SHADE_FONT));
+            textDisplay.setBillboard(Display.Billboard.FIXED);
+            textDisplay.setRotation(board.yaw(), 0.0F);
+            textDisplay.setAlignment(TextDisplay.TextAlignment.CENTER);
+            textDisplay.setShadowed(false);
+            textDisplay.setSeeThrough(false);
+            textDisplay.setTextOpacity((byte) 255);
+            textDisplay.setLineWidth(1000);
+            textDisplay.setDefaultBackground(false);
+            textDisplay.setBackgroundColor(Color.fromARGB(0, 0, 0, 0));
+            textDisplay.setBrightness(new Display.Brightness(13, 13));
+            textDisplay.setTransformation(textTransform(width / TITLE_SHADE_GLYPH_WIDTH, height / TITLE_SHADE_GLYPH_HEIGHT));
+        });
+        display.addScoreboardTag(DISPLAY_TAG);
+        entities.add(display);
+    }
+
+    private void spawnTitleText(String text, Location location, float yaw, double scale) {
+        Component component = Component.text(text);
+        List<TextDisplay> outlines = spawnTextOutlines(component, location, yaw, scale);
+        TextDisplay display = location.getWorld().spawn(location, TextDisplay.class, textDisplay -> {
+            textDisplay.text(component);
             textDisplay.setBillboard(Display.Billboard.FIXED);
             textDisplay.setRotation(yaw, 0.0F);
             textDisplay.setAlignment(TextDisplay.TextAlignment.CENTER);
             textDisplay.setShadowed(false);
             textDisplay.setSeeThrough(false);
-            textDisplay.setTextOpacity((byte) 0);
-            textDisplay.setLineWidth(2000);
+            textDisplay.setTextOpacity((byte) 255);
+            textDisplay.setLineWidth(400);
             textDisplay.setDefaultBackground(false);
-            textDisplay.setBackgroundColor(backgroundColor);
+            textDisplay.setBackgroundColor(Color.fromARGB(0, 0, 0, 0));
             textDisplay.setBrightness(new Display.Brightness(13, 13));
             textDisplay.setTransformation(textTransform(scale));
         });
         display.addScoreboardTag(DISPLAY_TAG);
         entities.add(display);
+        textOutlines.put(display, outlines);
+    }
+
+    private List<TextDisplay> spawnTextOutlines(Component text, Location location, float yaw, double scale) {
+        return spawnTextOutlines(text, location, yaw, scale, 1.0D);
+    }
+
+    private List<TextDisplay> spawnTextOutlines(Component text, Location location, float yaw, double scale, double outlineMultiplier) {
+        if (outlineMultiplier <= 0.0D) {
+            return List.of();
+        }
+        List<TextDisplay> outlines = new ArrayList<>(4);
+        double offset = TEXT_OUTLINE_OFFSET * outlineMultiplier * Math.max(0.7D, Math.min(1.6D, scale / 3.0D));
+        outlines.add(spawnTextOutline(text, outlineLocation(location, yaw, -offset, 0.0D), yaw, scale));
+        outlines.add(spawnTextOutline(text, outlineLocation(location, yaw, offset, 0.0D), yaw, scale));
+        outlines.add(spawnTextOutline(text, outlineLocation(location, yaw, 0.0D, -offset), yaw, scale));
+        outlines.add(spawnTextOutline(text, outlineLocation(location, yaw, 0.0D, offset), yaw, scale));
+        return outlines;
+    }
+
+    private TextDisplay spawnTextOutline(Component text, Location location, float yaw, double scale) {
+        Component outlineText = Component.text(PlainTextComponentSerializer.plainText().serialize(text), NamedTextColor.BLACK);
+        TextDisplay display = location.getWorld().spawn(location, TextDisplay.class, textDisplay -> {
+            textDisplay.text(outlineText);
+            textDisplay.setBillboard(Display.Billboard.FIXED);
+            textDisplay.setRotation(yaw, 0.0F);
+            textDisplay.setAlignment(TextDisplay.TextAlignment.CENTER);
+            textDisplay.setShadowed(false);
+            textDisplay.setSeeThrough(false);
+            textDisplay.setTextOpacity((byte) 255);
+            textDisplay.setLineWidth(400);
+            textDisplay.setDefaultBackground(false);
+            textDisplay.setBackgroundColor(Color.fromARGB(0, 0, 0, 0));
+            textDisplay.setBrightness(new Display.Brightness(15, 15));
+            textDisplay.setTransformation(textTransform(scale));
+        });
+        display.addScoreboardTag(DISPLAY_TAG);
+        entities.add(display);
+        return display;
+    }
+
+    private Location outlineLocation(Location location, float yaw, double horizontalOffset, double verticalOffset) {
+        BlockFace face = yawToFace(yaw);
+        double depthX = face.getModX() * -TEXT_OUTLINE_DEPTH_OFFSET;
+        double depthZ = face.getModZ() * -TEXT_OUTLINE_DEPTH_OFFSET;
+        if (face == BlockFace.NORTH || face == BlockFace.SOUTH) {
+            return location.clone().add(horizontalOffset + depthX, verticalOffset, depthZ);
+        }
+        return location.clone().add(depthX, verticalOffset, horizontalOffset + depthZ);
     }
 
     private void moveImage(ItemDisplay display, Location location, DisplaySize size) {
@@ -613,6 +820,28 @@ public final class CandidateDisplay {
         }
         display.teleport(location);
         display.setTransformation(textTransform(scale));
+        moveTextOutlines(display, location, scale);
+    }
+
+    private void moveTextOutlines(TextDisplay display, Location location, double scale) {
+        List<TextDisplay> outlines = textOutlines.get(display);
+        if (outlines == null) {
+            return;
+        }
+        double offset = TEXT_OUTLINE_OFFSET * Math.max(0.7D, Math.min(1.6D, scale / 3.0D));
+        Location[] locations = new Location[] {
+                outlineLocation(location, display.getLocation().getYaw(), -offset, 0.0D),
+                outlineLocation(location, display.getLocation().getYaw(), offset, 0.0D),
+                outlineLocation(location, display.getLocation().getYaw(), 0.0D, -offset),
+                outlineLocation(location, display.getLocation().getYaw(), 0.0D, offset)
+        };
+        for (int index = 0; index < outlines.size() && index < locations.length; index++) {
+            TextDisplay outline = outlines.get(index);
+            if (outline.isValid()) {
+                outline.teleport(locations[index]);
+                outline.setTransformation(textTransform(scale));
+            }
+        }
     }
 
     private Transformation imageTransform(DisplaySize size) {
@@ -625,10 +854,14 @@ public final class CandidateDisplay {
     }
 
     private Transformation textTransform(double scale) {
+        return textTransform(scale, scale);
+    }
+
+    private Transformation textTransform(double scaleX, double scaleY) {
         return new Transformation(
                 new Vector3f(0.0F, 0.0F, 0.0F),
                 new AxisAngle4f(0.0F, 0.0F, 1.0F, 0.0F),
-                new Vector3f((float) scale, (float) scale, (float) scale),
+                new Vector3f((float) scaleX, (float) scaleY, 1.0F),
                 new AxisAngle4f(0.0F, 0.0F, 1.0F, 0.0F)
         );
     }
@@ -638,9 +871,17 @@ public final class CandidateDisplay {
         double titleScale = clamp(base * 1.05D, 2.6D, 7.2D);
         double nameScale = clamp(base * 0.72D, 2.0D, 5.2D);
         double vsScale = clamp(base * 1.0D, 2.6D, 6.5D);
-        double titleY = board.height() / 2.0D - Math.max(0.75D, titleScale * 0.24D);
-        double nameY = -board.height() / 2.0D + board.height() * 0.38D;
-        return new TextLayout(titleY, nameY, titleScale, nameScale, vsScale);
+        double titleBarHeight = Math.max(0.9D, titleScale * 0.34D);
+        double contentHeight = Math.max(1.0D, board.height() - titleBarHeight);
+        double contentY = -titleBarHeight / 2.0D;
+        double titleY = board.height() / 2.0D - titleBarHeight / 2.0D;
+        double titleTextY = titleY - titleScale * 0.12D;
+        double nameY = -board.height() / 2.0D + contentHeight * 0.38D;
+        return new TextLayout(titleY, titleTextY, nameY, titleScale, nameScale, vsScale, titleBarHeight, contentY, contentHeight);
+    }
+
+    private double fitTitleScale(BoardSpec board, TextLayout textLayout, String title) {
+        return fitTextScale(title, textLayout.titleScale(), board.width() * 0.82D);
     }
 
     private double fitTextScale(String text, double preferredScale, double maxWorldWidth) {
@@ -650,12 +891,6 @@ public final class CandidateDisplay {
             return preferredScale;
         }
         return Math.max(0.55D, preferredScale * maxWorldWidth / estimatedWidth);
-    }
-
-    private int titleBackgroundSpaces(BoardSpec board, double titleScale) {
-        double boardRatio = board.width() / Math.max(1.0D, board.height());
-        double scaleRatio = Math.max(1.0D, board.height()) / Math.max(0.01D, titleScale);
-        return Math.max(1, (int) Math.ceil(boardRatio * scaleRatio * 12.0D));
     }
 
     private double clamp(double value, double min, double max) {
@@ -680,6 +915,29 @@ public final class CandidateDisplay {
         return leftSide ? -size.width() / 2.0D : size.width() / 2.0D;
     }
 
+    private Location fixedNameLocation(BoardSpec board, TextLayout textLayout, boolean leftSide) {
+        return board.locationAt(matchNameX(board, leftSide), matchNameY(board, textLayout), TEXT_DEPTH);
+    }
+
+    private Location fixedLoweredNameLocation(BoardSpec board, boolean leftSide) {
+        return board.locationAt(fixedNameX(board, leftSide), -board.height() / 2.0D + 0.15D, TEXT_DEPTH);
+    }
+
+    private double fixedNameX(BoardSpec board, boolean leftSide) {
+        double margin = board.width() * 0.03D;
+        double halfCenter = board.width() * 0.25D;
+        return leftSide ? -halfCenter + margin : halfCenter - margin;
+    }
+
+    private double matchNameX(BoardSpec board, boolean leftSide) {
+        double x = board.width() * MATCH_NAME_CENTER_X_RATIO;
+        return leftSide ? -x : x;
+    }
+
+    private double matchNameY(BoardSpec board, TextLayout textLayout) {
+        return textLayout.nameY() - board.height() * MATCH_NAME_Y_DROP_RATIO;
+    }
+
     private DisplaySize lerpSize(DisplaySize start, DisplaySize end, double progress) {
         return new DisplaySize(
                 lerp(start.width(), end.width(), progress),
@@ -695,6 +953,16 @@ public final class CandidateDisplay {
         }
         entities.clear();
         candidateImages.clear();
+        textOutlines.clear();
+
+        BoardSpec board = readBoardSpec();
+        for (World world : plugin.getServer().getWorlds()) {
+            for (Entity entity : world.getEntities()) {
+                if (shouldClearPersistedEntity(entity, board)) {
+                    entity.remove();
+                }
+            }
+        }
     }
 
     private void clearBackground() {
@@ -706,6 +974,9 @@ public final class CandidateDisplay {
 
     private boolean shouldClearPersistedEntity(Entity entity, BoardSpec board) {
         if (!(entity instanceof Display)) {
+            return false;
+        }
+        if (background != null && background.isValid() && entity.getUniqueId().equals(background.getUniqueId())) {
             return false;
         }
         if (entity.getScoreboardTags().contains(DISPLAY_TAG)) {
@@ -767,7 +1038,7 @@ public final class CandidateDisplay {
         };
     }
 
-    private record TextLayout(double titleY, double nameY, double titleScale, double nameScale, double vsScale) {
+    private record TextLayout(double titleY, double titleTextY, double nameY, double titleScale, double nameScale, double vsScale, double titleBarHeight, double contentY, double contentHeight) {
     }
 
     private record DisplaySize(double width, double height) {
@@ -776,12 +1047,130 @@ public final class CandidateDisplay {
     private record CandidateImage(ItemDisplay display, Candidate candidate, TextDisplay playOverlay, TextDisplay nameText, Location normalTextLocation, Location loweredTextLocation, double textScale) {
     }
 
-    private record ScrollingImage(ItemDisplay display, Candidate candidate, TextDisplay rank, TextDisplay label, TextDisplay wins, Location imageStart, Location rankStart, Location labelStart, Location winsStart, double rankScale, double labelScale, double winsScale, DisplaySize size) {
+    private final class ScrollingImage {
+        private final Candidate candidate;
+        private final String rank;
+        private final String label;
+        private final String stats;
+        private final Location imageStart;
+        private final Location rankStart;
+        private final Location labelStart;
+        private final Location winsStart;
+        private final double rankScale;
+        private final double labelScale;
+        private final double winsScale;
+        private final DisplaySize size;
+        private ItemDisplay display;
+        private TextDisplay rankDisplay;
+        private TextDisplay labelDisplay;
+        private TextDisplay winsDisplay;
+        private boolean removed;
+        private boolean animationStarted;
+        private int animationStartFrame;
+
+        private ScrollingImage(Candidate candidate, String rank, String label, String stats, Location imageStart, Location rankStart, Location labelStart, Location winsStart, double rankScale, double labelScale, double winsScale, DisplaySize size) {
+            this.candidate = candidate;
+            this.rank = rank;
+            this.label = label;
+            this.stats = stats;
+            this.imageStart = imageStart;
+            this.rankStart = rankStart;
+            this.labelStart = labelStart;
+            this.winsStart = winsStart;
+            this.rankScale = rankScale;
+            this.labelScale = labelScale;
+            this.winsScale = winsScale;
+            this.size = size;
+        }
+
+        private boolean spawned() {
+            return display != null && display.isValid();
+        }
+
+        private boolean removed() {
+            return removed;
+        }
+
+        private void markRemoved() {
+            removed = true;
+        }
+
+        private void spawn(double offset) {
+            display = spawnImage(candidate, imageStart.clone().add(0.0D, offset, 0.0D), imageStart.getYaw(), size, 1, false);
+            rankDisplay = spawnText(Component.text(rank), rankStart.clone().add(0.0D, offset, 0.0D), rankStart.getYaw(), rankScale, null, 0.0D);
+            labelDisplay = spawnText(Component.text(label), labelStart.clone().add(0.0D, offset, 0.0D), labelStart.getYaw(), labelScale, null, 0.0D);
+            winsDisplay = spawnText(Component.text(stats, NamedTextColor.GOLD), winsStart.clone().add(0.0D, offset, 0.0D), winsStart.getYaw(), winsScale, null, 0.0D);
+        }
+
+        private boolean animationStarted() {
+            return animationStarted;
+        }
+
+        private int animationStartFrame() {
+            return animationStartFrame;
+        }
+
+        private void startAnimation(int frame) {
+            animationStarted = true;
+            animationStartFrame = frame;
+        }
+
+        private ItemDisplay display() {
+            return display;
+        }
+
+        private Candidate candidate() {
+            return candidate;
+        }
+
+        private TextDisplay rankDisplay() {
+            return rankDisplay;
+        }
+
+        private TextDisplay labelDisplay() {
+            return labelDisplay;
+        }
+
+        private TextDisplay winsDisplay() {
+            return winsDisplay;
+        }
+
+        private Location imageStart() {
+            return imageStart;
+        }
+
+        private Location rankStart() {
+            return rankStart;
+        }
+
+        private Location labelStart() {
+            return labelStart;
+        }
+
+        private Location winsStart() {
+            return winsStart;
+        }
+
+        private double rankScale() {
+            return rankScale;
+        }
+
+        private double labelScale() {
+            return labelScale;
+        }
+
+        private double winsScale() {
+            return winsScale;
+        }
+
+        private DisplaySize size() {
+            return size;
+        }
     }
 
     public record RankingRow(Candidate candidate, String name, String resultLabel, long votes) {
         private String statText() {
-            return resultLabel + "\n" + votes + "표 획득";
+            return resultLabel + " · " + votes + "표 획득";
         }
     }
 

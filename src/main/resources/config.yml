@@ -15,8 +15,6 @@ locations:
   lobby: null
   cinema: null
 
-board:
-  maps-per-tick: 24
-  animation-maps-per-tick: 10000
-  max-columns: 0
-  max-rows: 0
+ending-bgm:
+  enabled: true
+  gap-seconds: 1.0

@@ -20,6 +20,7 @@ import org.bukkit.Material;
 import org.bukkit.boss.BarColor;
 import org.bukkit.boss.BarStyle;
 import org.bukkit.boss.BossBar;
+import org.bukkit.configuration.ConfigurationSection;
 import org.bukkit.configuration.file.YamlConfiguration;
 import org.bukkit.entity.Player;
 import org.bukkit.inventory.ItemStack;
@@ -32,6 +33,7 @@ import org.bukkit.scheduler.BukkitTask;
 
 import java.io.File;
 import java.io.IOException;
+import java.nio.charset.StandardCharsets;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayDeque;
@@ -47,9 +49,16 @@ import java.util.Random;
 import java.util.Set;
 import java.util.UUID;
 import java.util.function.Consumer;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
+import java.util.zip.ZipEntry;
+import java.util.zip.ZipFile;
 
 public final class IdealCupGame {
     private static final long DEFAULT_MEDIA_PLAYBACK_TICKS = 200L;
+    private static final long ADMIN_SKIP_DEBOUNCE_MILLIS = 350L;
+    private static final String ENDING_BGM_MANIFEST_PATH = "assets/idealcup/ending_bgm.yml";
+    private static final Pattern ENDING_SOUND_ENTRY_PATTERN = Pattern.compile("assets/idealcup/sounds/ending_theme(\\d*)\\.ogg", Pattern.CASE_INSENSITIVE);
 
     private final JavaPlugin plugin;
     private final CandidateRepository candidateRepository;
@@ -71,8 +80,9 @@ public final class IdealCupGame {
     private BukkitTask rankingAudioTask;
     private boolean mediaPlaying;
     private Candidate playingCandidate;
-    private Candidate rankingAudioCandidate;
+    private String rankingAudioSoundKey;
     private Runnable activeCountdownDone;
+    private long lastAdminSkipMillis;
     private String cupName = "IdealCup";
     private UUID currentDebater;
     private boolean startTitleShown;
@@ -457,6 +467,7 @@ public final class IdealCupGame {
         bossBar.setProgress(1.0D);
         bossBar.setTitle("최종 우승: " + winner.name());
         Bukkit.broadcastMessage(ChatColor.LIGHT_PURPLE + "이상형 월드컵 최종 우승: " + winner.name());
+        playWinnerFanfare();
         Bukkit.getOnlinePlayers().forEach(player -> player.showTitle(net.kyori.adventure.title.Title.title(
                 Component.text("최종 우승"),
                 Component.text(winner.name())
@@ -626,6 +637,9 @@ public final class IdealCupGame {
                 }
                 if (remaining <= 0) {
                     cancel();
+                    if (activeCountdownDone == done) {
+                        activeCountdownDone = null;
+                    }
                     done.run();
                     return;
                 }
@@ -690,6 +704,12 @@ public final class IdealCupGame {
         player.playSound(player.getLocation(), sound, volume, pitch);
     }
 
+    private void playWinnerFanfare() {
+        playGlobalSound("minecraft:ui.toast.challenge_complete", 1.0F, 1.0F);
+        playGlobalSound("minecraft:entity.firework_rocket.twinkle", 0.9F, 1.2F);
+        playGlobalSound("minecraft:entity.player.levelup", 0.85F, 1.35F);
+    }
+
     public boolean handleAdminPlaybackControl(Player player, org.bukkit.event.block.Action action) {
         if (action != org.bukkit.event.block.Action.LEFT_CLICK_AIR && action != org.bukkit.event.block.Action.LEFT_CLICK_BLOCK) {
             return false;
@@ -749,10 +769,15 @@ public final class IdealCupGame {
             player.sendActionBar(Component.text("영상 재생 중에는 타이머를 넘길 수 없습니다."));
             return true;
         }
+        long now = System.currentTimeMillis();
+        if (now - lastAdminSkipMillis < ADMIN_SKIP_DEBOUNCE_MILLIS) {
+            return true;
+        }
         if (activeCountdownDone == null) {
             player.sendMessage(ChatColor.YELLOW + "넘길 수 있는 타이머가 없습니다.");
             return true;
         }
+        lastAdminSkipMillis = now;
         Runnable done = activeCountdownDone;
         activeCountdownDone = null;
         cancelTasks();
@@ -820,6 +845,38 @@ public final class IdealCupGame {
                         .thenComparing(Comparator.comparingLong(RankingEntry::votes).reversed())
                         .thenComparing(RankingEntry::name))
                 .toList();
+    }
+
+    public int previewRankingScroll(List<Candidate> candidates, int limit) {
+        resetMediaPlayback();
+        resetRankingAudio();
+        removeBossBar();
+        displayedCandidates = List.of();
+
+        int shown = Math.min(Math.max(0, limit), candidates.size());
+        List<CandidateDisplay.RankingRow> rows = new ArrayList<>();
+        for (int index = 0; index < shown; index++) {
+            Candidate candidate = candidates.get(index);
+            rows.add(new CandidateDisplay.RankingRow(
+                    candidate,
+                    candidate.name(),
+                    previewRankingResultLabel(index + 1),
+                    Math.max(0, shown - index)
+            ));
+        }
+        candidateDisplay.showRanking("랭킹 스크롤 테스트", rows);
+        startFinalRankingAudio(rows);
+        return shown;
+    }
+
+    private String previewRankingResultLabel(int rank) {
+        if (rank == 1) {
+            return "우승";
+        }
+        if (rank == 2) {
+            return "준우승";
+        }
+        return "테스트";
     }
 
     private Optional<Candidate> displayedCandidateFromLook(Player player) {
@@ -907,29 +964,120 @@ public final class IdealCupGame {
 
     private void startFinalRankingAudio(List<CandidateDisplay.RankingRow> rows) {
         resetRankingAudio();
-        List<Candidate> soundCandidates = rows.stream()
-                .map(CandidateDisplay.RankingRow::candidate)
-                .filter(candidate -> candidate != null && candidate.soundKey() != null)
-                .toList();
-        if (soundCandidates.isEmpty()) {
-            return;
+        List<EndingBgmTrack> endingTracks = endingBgmTracks();
+        if (!endingTracks.isEmpty()) {
+            playEndingBgm(endingTracks, 0);
         }
-        playRankingAudio(soundCandidates, 0);
     }
 
-    private void playRankingAudio(List<Candidate> soundCandidates, int index) {
-        if (index >= soundCandidates.size()) {
+    private List<EndingBgmTrack> endingBgmTracks() {
+        ConfigurationSection section = plugin.getConfig().getConfigurationSection("ending-bgm");
+        if (section == null || !section.getBoolean("enabled", true)) {
+            return List.of();
+        }
+
+        List<EndingBgmTrack> tracks = new ArrayList<>();
+        for (Map<?, ?> trackConfig : plugin.getConfig().getMapList("ending-bgm.tracks")) {
+            Object soundValue = trackConfig.get("sound");
+            Object secondsValue = trackConfig.get("seconds");
+            if (!(soundValue instanceof String sound) || sound.isBlank()) {
+                continue;
+            }
+            double seconds = secondsValue instanceof Number number ? number.doubleValue() : 0.0D;
+            if (seconds <= 0.0D) {
+                continue;
+            }
+            tracks.add(new EndingBgmTrack(normalizeSoundKey(sound), durationSecondsToTicks(seconds)));
+        }
+        if (!tracks.isEmpty()) {
+            return tracks;
+        }
+        List<EndingBgmTrack> manifestTracks = endingBgmManifestTracks();
+        return manifestTracks.isEmpty() ? autoDetectedEndingBgmTracks(section) : manifestTracks;
+    }
+
+    private List<EndingBgmTrack> endingBgmManifestTracks() {
+        File packFile = new File(plugin.getDataFolder(), "resourcepack.zip");
+        if (!packFile.isFile()) {
+            return List.of();
+        }
+
+        try (ZipFile zipFile = new ZipFile(packFile, StandardCharsets.UTF_8)) {
+            ZipEntry manifestEntry = zipFile.getEntry(ENDING_BGM_MANIFEST_PATH);
+            if (manifestEntry == null) {
+                return List.of();
+            }
+
+            YamlConfiguration manifest;
+            try (var inputStream = zipFile.getInputStream(manifestEntry);
+                 var reader = new java.io.InputStreamReader(inputStream, StandardCharsets.UTF_8)) {
+                manifest = YamlConfiguration.loadConfiguration(reader);
+            }
+
+            List<EndingBgmTrack> tracks = new ArrayList<>();
+            for (String modelName : manifest.getStringList("order")) {
+                String sound = manifest.getString("tracks." + modelName + ".sound", "idealcup:" + modelName);
+                long ticks = manifest.getLong("tracks." + modelName + ".ticks", 0L);
+                if (ticks > 0L) {
+                    tracks.add(new EndingBgmTrack(normalizeSoundKey(sound), ticks));
+                }
+            }
+            return tracks;
+        } catch (IOException exception) {
+            plugin.getLogger().warning("엔딩 BGM 메타를 불러올 수 없습니다: " + exception.getMessage());
+            return List.of();
+        }
+    }
+
+    private List<EndingBgmTrack> autoDetectedEndingBgmTracks(ConfigurationSection section) {
+        File packFile = new File(plugin.getDataFolder(), "resourcepack.zip");
+        if (!packFile.isFile()) {
+            return List.of();
+        }
+
+        List<DetectedEndingSound> detectedSounds = new ArrayList<>();
+        try (ZipFile zipFile = new ZipFile(packFile, StandardCharsets.UTF_8)) {
+            var entries = zipFile.entries();
+            while (entries.hasMoreElements()) {
+                ZipEntry entry = entries.nextElement();
+                Matcher matcher = ENDING_SOUND_ENTRY_PATTERN.matcher(entry.getName().replace('\\', '/'));
+                if (!entry.isDirectory() && matcher.matches()) {
+                    String suffix = matcher.group(1);
+                    int order = suffix == null || suffix.isBlank() ? 1 : Integer.parseInt(suffix);
+                    String modelName = order == 1 ? "ending_theme" : "ending_theme" + order;
+                    detectedSounds.add(new DetectedEndingSound(modelName, order));
+                }
+            }
+        } catch (IOException exception) {
+            plugin.getLogger().warning("엔딩 BGM을 불러올 수 없습니다: " + exception.getMessage());
+            return List.of();
+        }
+
+        detectedSounds.sort(Comparator.comparingInt(DetectedEndingSound::order));
+        List<EndingBgmTrack> tracks = new ArrayList<>();
+        for (DetectedEndingSound sound : detectedSounds) {
+            double seconds = section.getDouble("durations." + sound.modelName(), section.getDouble("default-seconds", 120.0D));
+            if (seconds > 0.0D) {
+                tracks.add(new EndingBgmTrack("idealcup:" + sound.modelName(), durationSecondsToTicks(seconds)));
+            }
+        }
+        return tracks;
+    }
+
+    private void playEndingBgm(List<EndingBgmTrack> tracks, int index) {
+        if (tracks.isEmpty()) {
             rankingAudioTask = null;
-            rankingAudioCandidate = null;
+            rankingAudioSoundKey = null;
             return;
         }
-        Candidate candidate = soundCandidates.get(index);
-        rankingAudioCandidate = candidate;
-        playGlobalSound(candidate.soundKey(), 1.0F, 1.0F);
-        long nextDelayTicks = playbackTicks(candidate) + 10L;
+
+        EndingBgmTrack track = tracks.get(index % tracks.size());
+        rankingAudioSoundKey = track.soundKey();
+        playGlobalSound(track.soundKey(), 1.0F, 1.0F);
+        long nextDelayTicks = track.durationTicks() + endingBgmGapTicks();
         rankingAudioTask = Bukkit.getScheduler().runTaskLater(plugin, () -> {
-            stopCandidateSound(candidate);
-            playRankingAudio(soundCandidates, index + 1);
+            stopGlobalSound(track.soundKey());
+            playEndingBgm(tracks, index + 1);
         }, nextDelayTicks);
     }
 
@@ -938,9 +1086,9 @@ public final class IdealCupGame {
             rankingAudioTask.cancel();
             rankingAudioTask = null;
         }
-        if (rankingAudioCandidate != null) {
-            stopCandidateSound(rankingAudioCandidate);
-            rankingAudioCandidate = null;
+        if (rankingAudioSoundKey != null) {
+            stopGlobalSound(rankingAudioSoundKey);
+            rankingAudioSoundKey = null;
         }
     }
 
@@ -948,14 +1096,32 @@ public final class IdealCupGame {
         if (candidate.soundKey() == null) {
             return;
         }
+        stopGlobalSound(candidate.soundKey());
+    }
+
+    private void stopGlobalSound(String soundKey) {
         for (Player player : Bukkit.getOnlinePlayers()) {
-            player.stopSound(candidate.soundKey());
+            player.stopSound(soundKey);
         }
     }
 
     private long playbackTicks(Candidate candidate) {
         long ticks = candidate.playbackTicks();
         return ticks > 0L ? ticks : DEFAULT_MEDIA_PLAYBACK_TICKS;
+    }
+
+    private long endingBgmGapTicks() {
+        double seconds = plugin.getConfig().getDouble("ending-bgm.gap-seconds", 1.0D);
+        return Math.max(0L, Math.round(Math.max(0.0D, seconds) * 20.0D));
+    }
+
+    private long durationSecondsToTicks(double seconds) {
+        return Math.max(1L, Math.round(seconds * 20.0D));
+    }
+
+    private String normalizeSoundKey(String sound) {
+        String trimmed = sound.trim();
+        return trimmed.contains(":") ? trimmed : "idealcup:" + trimmed;
     }
 
     private int maxFrameCount(Candidate candidate) {
@@ -982,7 +1148,6 @@ public final class IdealCupGame {
     }
 
     private void prepareGameInventory(Player player) {
-        applyOperatorNameColor(player);
         player.getInventory().clear();
         player.getInventory().setArmorContents(null);
         player.getInventory().setItemInOffHand(null);
@@ -991,15 +1156,6 @@ public final class IdealCupGame {
             player.getInventory().setItem(1, createRemoteItem());
         }
         player.getInventory().setItem(8, createNamedItem(Material.SPYGLASS, "망원경"));
-    }
-
-    private void applyOperatorNameColor(Player player) {
-        if (!player.isOp()) {
-            return;
-        }
-        Component whiteName = Component.text(player.getName(), NamedTextColor.WHITE);
-        player.displayName(whiteName);
-        player.playerListName(whiteName);
     }
 
     private void ensureVotingTools(Player player) {
@@ -1083,8 +1239,14 @@ public final class IdealCupGame {
             if (rank == 2) {
                 return "준우승";
             }
-            return lastRoundSize + "강";
+            return lastRoundSize + "강 진출";
         }
+    }
+
+    private record EndingBgmTrack(String soundKey, long durationTicks) {
+    }
+
+    private record DetectedEndingSound(String modelName, int order) {
     }
 
 }

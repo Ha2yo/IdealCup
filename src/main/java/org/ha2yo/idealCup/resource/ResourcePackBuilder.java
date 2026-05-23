@@ -51,10 +51,12 @@ public final class ResourcePackBuilder {
     private static final String BUILD_FOLDER = "resourcepack-build";
     private static final String PACK_FILE = "resourcepack.zip";
     private static final String SPLIT_PACK_FOLDER = "resourcepack-parts";
+    private static final String TITLE_SHADE_FONT_NAME = "title_shade";
     private static final String BASE_SPLIT_PACK_FILE = "idealcup-base.zip";
     private static final String MEDIA_SPLIT_PACK_PREFIX = "idealcup-media-";
     private static final long SPLIT_PACK_MAX_BYTES = 180L * 1024L * 1024L;
     private static final String MANIFEST_PATH = "candidates.yml";
+    private static final String ENDING_BGM_MANIFEST_PATH = "assets/idealcup/ending_bgm.yml";
     private static final List<String> VIDEO_EXTENSIONS = List.of("mp4", "mkv", "mov");
     private static final List<String> SOURCE_EXTENSIONS = List.of("png", "jpg", "jpeg", "webp", "gif", "mp4", "mkv", "mov");
     public static final List<Integer> ALLOWED_ANIMATION_FPS = List.of(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20);
@@ -64,6 +66,8 @@ public final class ResourcePackBuilder {
     private static final int MAX_GIF_FRAMES = 80;
     private static final String FFMPEG_DOWNLOAD_URL = "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-gpl.zip";
     private static final Pattern ANIMATION_SIZE_PATTERN = Pattern.compile("\"(width|height)\"\\s*:\\s*(\\d+)");
+    private static final Pattern ENDING_THEME_PATTERN = Pattern.compile("ending_theme(\\d*)\\.(ogg|mp3|wav|flac|m4a|aac)", Pattern.CASE_INSENSITIVE);
+    private static final Pattern AUDIO_DURATION_PATTERN = Pattern.compile("Duration:\\s*(\\d+):(\\d+):(\\d+(?:\\.\\d+)?)");
 
     private final JavaPlugin plugin;
     private int maxImageSize = DEFAULT_IMAGE_SIZE;
@@ -130,6 +134,7 @@ public final class ResourcePackBuilder {
         try {
             registerImageReaders();
             recreateFolder(buildFolder.toPath());
+            writeTitleShadeAssets(buildFolder);
             writePackMeta(sourceFolder, buildFolder, packDescription);
             copyPackIcon(sourceFolder, buildFolder);
             Files.copy(manifestFile.toPath(), new File(buildFolder, MANIFEST_PATH).toPath(), java.nio.file.StandardCopyOption.REPLACE_EXISTING);
@@ -174,6 +179,9 @@ public final class ResourcePackBuilder {
                 return new BuildResult(false, 0, warnings);
             }
 
+            List<EndingSound> endingSounds = copyEndingSounds(sourceFolder, buildFolder);
+            soundModels.addAll(endingSounds.stream().map(EndingSound::modelName).toList());
+            writeEndingBgmManifest(buildFolder, endingSounds);
             writeSoundsJson(buildFolder, soundModels);
             writePackMeta(sourceFolder, buildFolder, packDescription);
             copyPackIcon(sourceFolder, buildFolder);
@@ -218,7 +226,7 @@ public final class ResourcePackBuilder {
         try {
             if (isVideoFile(imageFile)) {
                 writeVideoCandidateTexture(sourceFolder, buildFolder, id, imageFile, imagePath);
-                writeCandidateModels(buildFolder, id);
+                writeCandidateModels(buildFolder, id, true);
                 String soundModel = writeCandidateSound(sourceFolder, buildFolder, id, imageFile) ? modelName(id) : null;
                 progress.accept(progressMessage);
                 return new CandidateBuildResult(true, soundModel, null);
@@ -232,7 +240,7 @@ public final class ResourcePackBuilder {
                     return new CandidateBuildResult(false, null, warning);
                 }
                 writeAnimatedPngSource(buildFolder, id, imageFile);
-                writeCandidateModels(buildFolder, id);
+                writeCandidateModels(buildFolder, id, true);
                 String soundModel = writeCandidateSound(sourceFolder, buildFolder, id, imageFile) ? modelName(id) : null;
                 progress.accept(progressMessage);
                 return new CandidateBuildResult(true, soundModel, null);
@@ -246,13 +254,14 @@ public final class ResourcePackBuilder {
             }
             BufferedImage outputImage = normalizeImage(image);
             writePngImage(buildFolder, imagePath, outputImage);
-            writeStaticCandidateTexture(buildFolder, id, outputImage);
             if (isGifFile(imageFile)) {
+                writeStaticCandidateTexture(buildFolder, id, outputImage);
                 writeAnimatedCandidateTexture(buildFolder, id, imageFile, outputImage);
+                writeCandidateModels(buildFolder, id, true);
             } else {
                 writeCandidateTexture(buildFolder, id, outputImage);
+                writeCandidateModels(buildFolder, id, false);
             }
-            writeCandidateModels(buildFolder, id);
             String soundModel = writeCandidateSound(sourceFolder, buildFolder, id, imageFile) ? modelName(id) : null;
             progress.accept(progressMessage);
             return new CandidateBuildResult(true, soundModel, null);
@@ -385,12 +394,17 @@ public final class ResourcePackBuilder {
         return "images/" + id + ".png";
     }
 
-    private void writeCandidateModels(File buildFolder, String id) throws IOException {
-        writeCandidateModel(buildFolder, modelName(id), textureReference(modelName(id)));
-        writeCandidateModel(buildFolder, staticModelName(id), textureReference(staticModelName(id)));
+    private void writeCandidateModels(File buildFolder, String id, boolean hasStaticTexture) throws IOException {
+        String modelName = modelName(id);
+        writeCandidateModel(buildFolder, modelName, textureReference(modelName));
+        writeCandidateModel(buildFolder, staticModelName(id), textureReference(hasStaticTexture ? staticModelName(id) : modelName));
     }
 
     private void writeCandidateModel(File buildFolder, String modelName, String texture) throws IOException {
+        writeItemModel(buildFolder, modelName, texture, "minecraft:cutout");
+    }
+
+    private void writeItemModel(File buildFolder, String modelName, String texture, String renderType) throws IOException {
         File modelFile = new File(buildFolder, "assets/minecraft/models/item/idealcup/" + modelName + ".json");
         File itemFile = new File(buildFolder, "assets/minecraft/items/idealcup/" + modelName + ".json");
         Files.createDirectories(modelFile.toPath().getParent());
@@ -399,12 +413,13 @@ public final class ResourcePackBuilder {
         String modelJson = """
                 {
                   "parent": "minecraft:item/generated",
+                  "render_type": "%s",
                   "ambientocclusion": false,
                   "textures": {
                     "layer0": "%s"
                   }
                 }
-                """.formatted(texture);
+                """.formatted(renderType, texture);
         String itemJson = """
                 {
                   "model": {
@@ -416,6 +431,40 @@ public final class ResourcePackBuilder {
 
         Files.writeString(modelFile.toPath(), modelJson, StandardCharsets.UTF_8);
         Files.writeString(itemFile.toPath(), itemJson, StandardCharsets.UTF_8);
+    }
+
+    private void writeTitleShadeAssets(File buildFolder) throws IOException {
+        File fontFile = new File(buildFolder, "assets/idealcup/font/" + TITLE_SHADE_FONT_NAME + ".json");
+        File textureFile = new File(buildFolder, "assets/idealcup/textures/font/" + TITLE_SHADE_FONT_NAME + ".png");
+        Files.createDirectories(fontFile.toPath().getParent());
+        Files.createDirectories(textureFile.toPath().getParent());
+        ImageIO.write(titleShadeTexture(), "png", textureFile);
+        String fontJson = """
+                {
+                  "providers": [
+                    {
+                      "type": "bitmap",
+                      "file": "idealcup:font/%s.png",
+                      "ascent": 8,
+                      "height": 8,
+                      "chars": ["\\uE000"]
+                    }
+                  ]
+                }
+                """.formatted(TITLE_SHADE_FONT_NAME);
+        Files.writeString(fontFile.toPath(), fontJson, StandardCharsets.UTF_8);
+    }
+
+    private BufferedImage titleShadeTexture() {
+        int width = 128;
+        int height = 32;
+        BufferedImage image = new BufferedImage(width, height, BufferedImage.TYPE_INT_ARGB);
+        for (int y = 0; y < height; y++) {
+            for (int x = 0; x < width; x++) {
+                image.setRGB(x, y, 0x99000000);
+            }
+        }
+        return image;
     }
 
     private File sourceImageFile(File sourceFolder, String id) {
@@ -552,7 +601,7 @@ public final class ResourcePackBuilder {
                 "-c:a",
                 "libvorbis",
                 "-q:a",
-                "4",
+                "10",
                 targetFile.getAbsolutePath()
         );
 
@@ -600,6 +649,140 @@ public final class ResourcePackBuilder {
         File soundsJson = new File(buildFolder, "assets/idealcup/sounds.json");
         Files.createDirectories(soundsJson.toPath().getParent());
         Files.writeString(soundsJson.toPath(), "{\n" + entries + "\n}\n", StandardCharsets.UTF_8);
+    }
+
+    private List<EndingSound> copyEndingSounds(File sourceFolder, File buildFolder) throws IOException {
+        List<EndingSoundSource> sounds = new ArrayList<>();
+        collectEndingSounds(sourceFolder, sounds);
+        collectEndingSounds(new File(sourceFolder, "sounds"), sounds);
+        sounds.sort(Comparator.comparingInt(EndingSoundSource::order));
+
+        List<EndingSound> endingSounds = new ArrayList<>();
+        Set<String> copiedModels = new LinkedHashSet<>();
+        for (EndingSoundSource sound : sounds) {
+            if (!copiedModels.add(sound.modelName())) {
+                continue;
+            }
+            File targetFile = new File(buildFolder, "assets/idealcup/sounds/" + sound.modelName() + ".ogg");
+            long durationTicks = convertEndingSound(sound.file(), targetFile);
+            endingSounds.add(new EndingSound(sound.modelName(), durationTicks, sound.order()));
+        }
+        return endingSounds;
+    }
+
+    private void collectEndingSounds(File folder, List<EndingSoundSource> sounds) {
+        File[] files = folder.listFiles();
+        if (files == null) {
+            return;
+        }
+        for (File file : files) {
+            if (!file.isFile()) {
+                continue;
+            }
+            Matcher matcher = ENDING_THEME_PATTERN.matcher(file.getName());
+            if (!matcher.matches()) {
+                continue;
+            }
+            String suffix = matcher.group(1);
+            int order = suffix == null || suffix.isBlank() ? 1 : Integer.parseInt(suffix);
+            String modelName = order == 1 ? "ending_theme" : "ending_theme" + order;
+            sounds.add(new EndingSoundSource(file, modelName, order));
+        }
+    }
+
+    private long convertEndingSound(File sourceFile, File targetFile) throws IOException {
+        Files.createDirectories(targetFile.toPath().getParent());
+        Files.deleteIfExists(targetFile.toPath());
+
+        String ffmpeg = resolveFfmpeg();
+        List<String> command = List.of(
+                ffmpeg,
+                "-hide_banner",
+                "-loglevel",
+                "error",
+                "-y",
+                "-i",
+                sourceFile.getAbsolutePath(),
+                "-vn",
+                "-af",
+                "loudnorm=I=-14:TP=-1.0:LRA=9",
+                "-c:a",
+                "libvorbis",
+                "-q:a",
+                "10",
+                targetFile.getAbsolutePath()
+        );
+
+        ProcessBuilder processBuilder = new ProcessBuilder(command);
+        processBuilder.redirectErrorStream(true);
+        Process process = processBuilder.start();
+        String output;
+        try (var inputStream = process.getInputStream()) {
+            output = new String(inputStream.readAllBytes(), StandardCharsets.UTF_8);
+        }
+        try {
+            int exitCode = process.waitFor();
+            if (exitCode != 0 || !targetFile.isFile() || targetFile.length() <= 0L) {
+                Files.deleteIfExists(targetFile.toPath());
+                throw new IOException("엔딩 음원 변환에 실패했습니다: " + sourceFile.getName() + (output.isBlank() ? "" : " - " + output.trim()));
+            }
+            return readAudioDurationTicks(targetFile);
+        } catch (InterruptedException exception) {
+            Thread.currentThread().interrupt();
+            throw new IOException("엔딩 음원 변환이 중단되었습니다.", exception);
+        }
+    }
+
+    private long readAudioDurationTicks(File audioFile) throws IOException {
+        String ffmpeg = resolveFfmpeg();
+        ProcessBuilder processBuilder = new ProcessBuilder(
+                ffmpeg,
+                "-hide_banner",
+                "-i",
+                audioFile.getAbsolutePath()
+        );
+        processBuilder.redirectErrorStream(true);
+        Process process = processBuilder.start();
+        String output;
+        try (var inputStream = process.getInputStream()) {
+            output = new String(inputStream.readAllBytes(), StandardCharsets.UTF_8);
+        }
+        try {
+            process.waitFor();
+        } catch (InterruptedException exception) {
+            Thread.currentThread().interrupt();
+            throw new IOException("엔딩 음원 길이 확인이 중단되었습니다.", exception);
+        }
+
+        Matcher matcher = AUDIO_DURATION_PATTERN.matcher(output);
+        if (!matcher.find()) {
+            throw new IOException("엔딩 음원 길이를 확인할 수 없습니다: " + audioFile.getName());
+        }
+
+        double hours = Double.parseDouble(matcher.group(1));
+        double minutes = Double.parseDouble(matcher.group(2));
+        double seconds = Double.parseDouble(matcher.group(3));
+        return Math.max(1L, Math.round((hours * 3600.0D + minutes * 60.0D + seconds) * 20.0D));
+    }
+
+    private void writeEndingBgmManifest(File buildFolder, List<EndingSound> endingSounds) throws IOException {
+        if (endingSounds.isEmpty()) {
+            return;
+        }
+
+        YamlConfiguration manifest = new YamlConfiguration();
+        List<String> trackIds = new ArrayList<>();
+        for (EndingSound endingSound : endingSounds.stream().sorted(Comparator.comparingInt(EndingSound::order)).toList()) {
+            String path = "tracks." + endingSound.modelName() + ".";
+            manifest.set(path + "sound", "idealcup:" + endingSound.modelName());
+            manifest.set(path + "ticks", endingSound.durationTicks());
+            trackIds.add(endingSound.modelName());
+        }
+        manifest.set("order", trackIds);
+
+        File manifestFile = new File(buildFolder, ENDING_BGM_MANIFEST_PATH);
+        Files.createDirectories(manifestFile.toPath().getParent());
+        manifest.save(manifestFile);
     }
 
     private void writeVideoCandidateTexture(File sourceFolder, File buildFolder, String id, File videoFile, String imagePath) throws IOException {
@@ -863,6 +1046,10 @@ public final class ResourcePackBuilder {
         return output;
     }
 
+    private double clamp(double value, double min, double max) {
+        return Math.max(min, Math.min(max, value));
+    }
+
     private String textureReference(String modelName) {
         return "minecraft:item/idealcup/" + modelName;
     }
@@ -1061,6 +1248,10 @@ public final class ResourcePackBuilder {
         Path sounds = Path.of("assets/idealcup/sounds.json");
         if (Files.isRegularFile(buildRoot.resolve(sounds))) {
             paths.add(sounds);
+        }
+        Path endingBgm = Path.of(ENDING_BGM_MANIFEST_PATH);
+        if (Files.isRegularFile(buildRoot.resolve(endingBgm))) {
+            paths.add(endingBgm);
         }
         return paths;
     }
@@ -1338,6 +1529,12 @@ public final class ResourcePackBuilder {
     }
 
     private record CandidatePackGroup(String id, List<Path> paths, long size) {
+    }
+
+    private record EndingSoundSource(File file, String modelName, int order) {
+    }
+
+    private record EndingSound(String modelName, long durationTicks, int order) {
     }
 
     private record AnimationSize(int width, int height) {

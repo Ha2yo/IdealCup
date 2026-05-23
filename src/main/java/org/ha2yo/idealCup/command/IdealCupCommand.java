@@ -5,6 +5,7 @@ import org.ha2yo.idealCup.game.VoteChoice;
 import org.ha2yo.idealCup.model.Candidate;
 import org.ha2yo.idealCup.resource.CandidateRepository;
 import org.ha2yo.idealCup.resource.ResourcePackBuilder;
+import org.ha2yo.idealCup.resource.SourceFetcher;
 import org.ha2yo.idealCup.visual.LocationConfig;
 import org.bukkit.Bukkit;
 import org.bukkit.ChatColor;
@@ -26,13 +27,16 @@ public final class IdealCupCommand implements CommandExecutor, TabCompleter {
     private final CandidateRepository candidateRepository;
     private final IdealCupGame game;
     private final ResourcePackBuilder resourcePackBuilder;
+    private final SourceFetcher sourceFetcher;
     private boolean buildingResourcePack;
+    private boolean fetchingSources;
 
     public IdealCupCommand(JavaPlugin plugin, CandidateRepository candidateRepository, IdealCupGame game) {
         this.plugin = plugin;
         this.candidateRepository = candidateRepository;
         this.game = game;
         this.resourcePackBuilder = new ResourcePackBuilder(plugin);
+        this.sourceFetcher = new SourceFetcher(plugin);
     }
 
     @Override
@@ -54,10 +58,12 @@ public final class IdealCupCommand implements CommandExecutor, TabCompleter {
         switch (subCommand) {
             case "start" -> start(sender, args);
             case "stop" -> game.stop(true);
+            case "fetchsources" -> fetchSources(sender, args);
             case "buildpack" -> buildPack(sender, args);
             case "unpack" -> unpack(sender, args);
             case "packready" -> packReady(sender, args);
             case "result" -> showResult(sender);
+            case "rankingtest" -> rankingTest(sender, args);
             case "status" -> sender.sendMessage(ChatColor.AQUA + game.status());
             case "forcewin" -> forceWin(sender, args);
             case "play" -> play(sender, args);
@@ -76,7 +82,7 @@ public final class IdealCupCommand implements CommandExecutor, TabCompleter {
             return Collections.emptyList();
         }
         if (args.length == 1) {
-            return filter(Arrays.asList("start", "stop", "buildpack", "unpack", "status", "forcewin", "play", "set", "packready", "result"), args[0]);
+            return filter(Arrays.asList("start", "stop", "fetchsources", "buildpack", "unpack", "status", "forcewin", "play", "set", "packready", "result", "rankingtest"), args[0]);
         }
         if (args.length == 2 && args[0].equalsIgnoreCase("play")) {
             candidateRepository.reload();
@@ -84,6 +90,12 @@ public final class IdealCupCommand implements CommandExecutor, TabCompleter {
         }
         if (args.length == 2 && args[0].equalsIgnoreCase("unpack")) {
             return filter(List.of("force"), args[1]);
+        }
+        if (args.length == 2 && args[0].equalsIgnoreCase("fetchsources")) {
+            return filter(Arrays.asList("force", "1", "2", "3", "4", "6", "8"), args[1]);
+        }
+        if (args.length == 3 && args[0].equalsIgnoreCase("fetchsources") && args[1].equalsIgnoreCase("force")) {
+            return filter(Arrays.asList("1", "2", "3", "4", "6", "8"), args[2]);
         }
         if (args.length == 2 && args[0].equalsIgnoreCase("buildpack")) {
             return filter(Arrays.asList("128", "192", "256", "384", "512"), args[1]);
@@ -99,6 +111,9 @@ public final class IdealCupCommand implements CommandExecutor, TabCompleter {
         }
         if (args.length == 2 && args[0].equalsIgnoreCase("forcewin")) {
             return filter(Arrays.asList("left", "right"), args[1]);
+        }
+        if (args.length == 2 && args[0].equalsIgnoreCase("rankingtest")) {
+            return filter(Arrays.asList("4", "8", "16", "32", "64"), args[1]);
         }
         if (args.length == 2 && args[0].equalsIgnoreCase("set")) {
             return filter(Arrays.asList("pos1", "pos2", "debate-left", "debate-right", "lobby", "cinema", "debatetime", "votetime"), args[1]);
@@ -231,6 +246,47 @@ public final class IdealCupCommand implements CommandExecutor, TabCompleter {
         });
     }
 
+    private void fetchSources(CommandSender sender, String[] args) {
+        if (fetchingSources) {
+            sender.sendMessage(ChatColor.RED + "이미 URL 후보 준비가 진행 중입니다.");
+            return;
+        }
+        boolean force = args.length >= 2 && args[1].equalsIgnoreCase("force");
+        int workerCount = 2;
+        int workerArgIndex = force ? 2 : 1;
+        if (args.length > workerArgIndex) {
+            try {
+                workerCount = Integer.parseInt(args[workerArgIndex]);
+            } catch (NumberFormatException exception) {
+                sender.sendMessage(ChatColor.RED + "병렬 처리 개수는 숫자로 입력해야 합니다.");
+                return;
+            }
+            if (workerCount < 1 || workerCount > 8) {
+                sender.sendMessage(ChatColor.RED + "병렬 처리 개수는 1 이상 8 이하로 입력하세요.");
+                return;
+            }
+        }
+        int fetchWorkerCount = workerCount;
+        fetchingSources = true;
+        sender.sendMessage(ChatColor.YELLOW + "URL 후보 준비를 시작합니다. 병렬 처리: " + fetchWorkerCount + "개"
+                + (force ? ", 기존 파일을 덮어씁니다." : ", 기존 파일은 유지합니다."));
+        Bukkit.getScheduler().runTaskAsynchronously(plugin, () -> {
+            SourceFetcher.FetchResult result = sourceFetcher.fetch(force, fetchWorkerCount, message -> sendProgress(sender, message));
+            Bukkit.getScheduler().runTask(plugin, () -> {
+                fetchingSources = false;
+                for (String warning : result.warnings()) {
+                    sender.sendMessage(ChatColor.RED + warning);
+                }
+                if (!result.success()) {
+                    sender.sendMessage(ChatColor.RED + "URL 후보 준비에 실패했습니다.");
+                    return;
+                }
+                sender.sendMessage(ChatColor.GREEN + "URL 후보를 준비했습니다. 준비된 후보: " + result.candidates() + "개");
+                sender.sendMessage(ChatColor.GRAY + "이제 /idealcup buildpack [픽셀수] [fps] [병렬개수]를 실행하세요.");
+            });
+        });
+    }
+
     private void sendProgress(CommandSender sender, String message) {
         Bukkit.getScheduler().runTask(plugin, () -> sender.sendMessage(ChatColor.GRAY + message));
     }
@@ -289,6 +345,41 @@ public final class IdealCupCommand implements CommandExecutor, TabCompleter {
             return;
         }
         game.openResultDialog(player);
+    }
+
+    private void rankingTest(CommandSender sender, String[] args) {
+        if (game.isRunning()) {
+            sender.sendMessage(ChatColor.RED + "월드컵 진행 중에는 랭킹 스크롤 테스트를 실행할 수 없습니다.");
+            return;
+        }
+        if (!game.hasDisplayLocations()) {
+            sender.sendMessage(ChatColor.RED + "먼저 표시 영역을 설정하세요: /idealcup set pos1, /idealcup set pos2");
+            return;
+        }
+
+        int limit = 64;
+        if (args.length >= 2) {
+            try {
+                limit = Integer.parseInt(args[1]);
+            } catch (NumberFormatException exception) {
+                sender.sendMessage(ChatColor.RED + "개수는 숫자로 입력해야 합니다.");
+                return;
+            }
+        }
+        if (limit < 1) {
+            sender.sendMessage(ChatColor.RED + "개수는 1개 이상이어야 합니다.");
+            return;
+        }
+
+        candidateRepository.reload();
+        List<Candidate> candidates = candidateRepository.getCandidates();
+        if (candidates.isEmpty()) {
+            sender.sendMessage(ChatColor.RED + "표시할 후보가 없습니다. /idealcup buildpack을 먼저 실행하세요.");
+            return;
+        }
+
+        int shown = game.previewRankingScroll(candidates, limit);
+        sender.sendMessage(ChatColor.GREEN + "랭킹 스크롤 테스트를 표시합니다: " + shown + "개");
     }
 
     private Candidate findCandidate(String input) {
@@ -390,12 +481,14 @@ public final class IdealCupCommand implements CommandExecutor, TabCompleter {
     private void sendHelp(CommandSender sender, String label) {
         sender.sendMessage(ChatColor.AQUA + "/" + label + " start <월드컵이름> <참가자수>");
         sender.sendMessage(ChatColor.AQUA + "/" + label + " stop - 월드컵 중지");
+        sender.sendMessage(ChatColor.AQUA + "/" + label + " fetchsources [force] [병렬개수] - URL 후보 준비");
         sender.sendMessage(ChatColor.AQUA + "/" + label + " buildpack [픽셀수] [fps] [병렬개수] [팩이름] - 리소스팩 생성");
         sender.sendMessage(ChatColor.AQUA + "/" + label + " unpack [force] - resourcepack.zip에서 복원본 추출");
         sender.sendMessage(ChatColor.AQUA + "/" + label + " status - 진행 상태 확인");
         sender.sendMessage(ChatColor.AQUA + "/" + label + " forcewin <left(왼쪽)|right(오른쪽)> - 강제 승리");
         sender.sendMessage(ChatColor.AQUA + "/" + label + " play <번호> - 후보 미리보기 재생");
         sender.sendMessage(ChatColor.AQUA + "/" + label + " result - 최종 결과 창 열기");
+        sender.sendMessage(ChatColor.AQUA + "/" + label + " rankingtest [개수] - 랭킹 스크롤 화면 테스트");
         sender.sendMessage(ChatColor.AQUA + "/" + label + " set <pos1|pos2|debate-left|debate-right|lobby|cinema> - 표시/변론/이동 위치 설정");
         sender.sendMessage(ChatColor.AQUA + "/" + label + " set debatetime <초> - 변론 시간 설정");
         sender.sendMessage(ChatColor.AQUA + "/" + label + " set votetime <초> - 투표 시간 설정");

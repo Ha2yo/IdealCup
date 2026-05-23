@@ -6,6 +6,9 @@ import org.ha2yo.idealCup.game.IdealCupGame;
 import org.ha2yo.idealCup.listener.PlayerListener;
 import org.ha2yo.idealCup.resource.CandidateRepository;
 import org.ha2yo.idealCup.visual.CandidateDisplay;
+import org.bukkit.Bukkit;
+import org.bukkit.GameRule;
+import org.bukkit.World;
 import org.bukkit.command.PluginCommand;
 import org.bukkit.plugin.java.JavaPlugin;
 
@@ -43,6 +46,7 @@ public final class IdealCup extends JavaPlugin {
         }
 
         getServer().getPluginManager().registerEvents(new PlayerListener(game), this);
+        disableAdvancementAnnouncements();
         candidateRepository.reload();
     }
 
@@ -53,6 +57,12 @@ public final class IdealCup extends JavaPlugin {
         }
         if (candidateDisplay != null) {
             candidateDisplay.clear();
+        }
+    }
+
+    private void disableAdvancementAnnouncements() {
+        for (World world : Bukkit.getWorlds()) {
+            world.setGameRule(GameRule.ANNOUNCE_ADVANCEMENTS, false);
         }
     }
 }

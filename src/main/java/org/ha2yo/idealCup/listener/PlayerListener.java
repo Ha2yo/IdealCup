@@ -7,6 +7,7 @@ import org.ha2yo.idealCup.game.IdealCupGame;
 import org.bukkit.event.EventHandler;
 import org.bukkit.event.Listener;
 import org.bukkit.event.block.Action;
+import org.bukkit.event.player.PlayerAdvancementDoneEvent;
 import org.bukkit.event.player.PlayerInteractEvent;
 import org.bukkit.event.player.PlayerJoinEvent;
 import org.bukkit.event.player.PlayerQuitEvent;
@@ -60,12 +61,10 @@ public final class PlayerListener implements Listener {
                             .append(message.color(NamedTextColor.YELLOW)));
             return;
         }
-        if (event.getPlayer().isOp()) {
-            event.renderer((source, sourceDisplayName, message, viewer) ->
-                    Component.text("<", NamedTextColor.WHITE)
-                            .append(Component.text(source.getName(), NamedTextColor.WHITE))
-                            .append(Component.text("> ", NamedTextColor.WHITE))
-                            .append(message));
-        }
+    }
+
+    @EventHandler
+    public void onAdvancementDone(PlayerAdvancementDoneEvent event) {
+        event.message(null);
     }
 }
