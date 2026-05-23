@@ -1,7 +1,6 @@
 package org.ha2yo.idealCup.command;
 
 import org.ha2yo.idealCup.game.IdealCupGame;
-import org.ha2yo.idealCup.game.VoteChoice;
 import org.ha2yo.idealCup.model.Candidate;
 import org.ha2yo.idealCup.resource.CandidateRepository;
 import org.ha2yo.idealCup.resource.ResourcePackBuilder;
@@ -60,12 +59,10 @@ public final class IdealCupCommand implements CommandExecutor, TabCompleter {
             case "stop" -> game.stop(true);
             case "fetchsources" -> fetchSources(sender, args);
             case "buildpack" -> buildPack(sender, args);
-            case "unpack" -> unpack(sender, args);
             case "packready" -> packReady(sender, args);
             case "result" -> showResult(sender);
             case "rankingtest" -> rankingTest(sender, args);
             case "status" -> sender.sendMessage(ChatColor.AQUA + game.status());
-            case "forcewin" -> forceWin(sender, args);
             case "play" -> play(sender, args);
             case "set" -> setLocation(sender, args);
             default -> sendHelp(sender, label);
@@ -82,14 +79,11 @@ public final class IdealCupCommand implements CommandExecutor, TabCompleter {
             return Collections.emptyList();
         }
         if (args.length == 1) {
-            return filter(Arrays.asList("start", "stop", "fetchsources", "buildpack", "unpack", "status", "forcewin", "play", "set", "packready", "result", "rankingtest"), args[0]);
+            return filter(Arrays.asList("start", "stop", "fetchsources", "buildpack", "status", "play", "set", "packready", "result", "rankingtest"), args[0]);
         }
         if (args.length == 2 && args[0].equalsIgnoreCase("play")) {
             candidateRepository.reload();
             return filter(candidateRepository.getCandidates().stream().map(Candidate::id).toList(), args[1]);
-        }
-        if (args.length == 2 && args[0].equalsIgnoreCase("unpack")) {
-            return filter(List.of("force"), args[1]);
         }
         if (args.length == 2 && args[0].equalsIgnoreCase("fetchsources")) {
             return filter(Arrays.asList("force", "1", "2", "3", "4", "6", "8"), args[1]);
@@ -106,11 +100,8 @@ public final class IdealCupCommand implements CommandExecutor, TabCompleter {
         if (args.length == 4 && args[0].equalsIgnoreCase("buildpack")) {
             return filter(Arrays.asList("1", "2", "3", "4", "6", "8"), args[3]);
         }
-        if (args.length >= 3 && args[0].equalsIgnoreCase("start")) {
-            return filter(Arrays.asList("2", "4", "8", "16", "32", "64", "128"), args[args.length - 1]);
-        }
-        if (args.length == 2 && args[0].equalsIgnoreCase("forcewin")) {
-            return filter(Arrays.asList("left", "right"), args[1]);
+        if (args.length == 2 && args[0].equalsIgnoreCase("start")) {
+            return filter(Arrays.asList("2", "4", "8", "16", "32", "64", "128"), args[1]);
         }
         if (args.length == 2 && args[0].equalsIgnoreCase("rankingtest")) {
             return filter(Arrays.asList("4", "8", "16", "32", "64"), args[1]);
@@ -131,17 +122,17 @@ public final class IdealCupCommand implements CommandExecutor, TabCompleter {
             return;
         }
         if (args.length < 3) {
-            sender.sendMessage(ChatColor.RED + "사용법: /idealcup start <월드컵이름> <참가자수>");
+            sender.sendMessage(ChatColor.RED + "사용법: /idealcup start <후보수> <월드컵이름>");
             return;
         }
         try {
-            int size = Integer.parseInt(args[args.length - 1]);
-            String name = String.join(" ", Arrays.copyOfRange(args, 1, args.length - 1));
+            int size = Integer.parseInt(args[1]);
+            String name = String.join(" ", Arrays.copyOfRange(args, 2, args.length));
             plugin.reloadConfig();
             candidateRepository.reload();
             game.start(player, name, size);
         } catch (NumberFormatException exception) {
-            sender.sendMessage(ChatColor.RED + "참가자 수는 숫자로 입력해야 합니다.");
+            sender.sendMessage(ChatColor.RED + "후보 수는 숫자로 입력해야 합니다.");
         }
     }
 
@@ -228,24 +219,6 @@ public final class IdealCupCommand implements CommandExecutor, TabCompleter {
         });
     }
 
-    private void unpack(CommandSender sender, String[] args) {
-        boolean force = args.length >= 2 && args[1].equalsIgnoreCase("force");
-        sender.sendMessage(ChatColor.YELLOW + "리소스팩 원본 복원을 시작합니다.");
-        Bukkit.getScheduler().runTaskAsynchronously(plugin, () -> {
-            ResourcePackBuilder.BuildResult result = resourcePackBuilder.unpack(force, message -> sendProgress(sender, message));
-            Bukkit.getScheduler().runTask(plugin, () -> {
-                for (String warning : result.warnings()) {
-                    sender.sendMessage(ChatColor.RED + warning);
-                }
-                if (!result.success()) {
-                    sender.sendMessage(ChatColor.RED + "리소스팩 원본 복원에 실패했습니다.");
-                    return;
-                }
-                sender.sendMessage(ChatColor.GREEN + "리소스팩 내용을 복원했습니다. 복원된 후보: " + result.candidates() + "개");
-            });
-        });
-    }
-
     private void fetchSources(CommandSender sender, String[] args) {
         if (fetchingSources) {
             sender.sendMessage(ChatColor.RED + "이미 URL 후보 준비가 진행 중입니다.");
@@ -293,25 +266,6 @@ public final class IdealCupCommand implements CommandExecutor, TabCompleter {
 
     private void sendWarningProgress(CommandSender sender, String message) {
         Bukkit.getScheduler().runTask(plugin, () -> sender.sendMessage(ChatColor.RED + message));
-    }
-
-    private void forceWin(CommandSender sender, String[] args) {
-        if (!(sender instanceof Player player)) {
-            sender.sendMessage(ChatColor.RED + "이 명령어는 플레이어만 사용할 수 있습니다.");
-            return;
-        }
-        if (args.length < 2) {
-            sender.sendMessage(ChatColor.RED + "사용법: /idealcup forcewin <left(왼쪽)|right(오른쪽)>");
-            return;
-        }
-        String side = args[1].toLowerCase(Locale.ROOT);
-        if (side.equals("left")) {
-            game.forceWin(VoteChoice.LEFT, player);
-        } else if (side.equals("right")) {
-            game.forceWin(VoteChoice.RIGHT, player);
-        } else {
-            sender.sendMessage(ChatColor.RED + "방향은 left(왼쪽) 또는 right(오른쪽)로 입력해야 합니다.");
-        }
     }
 
     private void play(CommandSender sender, String[] args) {
@@ -479,13 +433,11 @@ public final class IdealCupCommand implements CommandExecutor, TabCompleter {
     }
 
     private void sendHelp(CommandSender sender, String label) {
-        sender.sendMessage(ChatColor.AQUA + "/" + label + " start <월드컵이름> <참가자수>");
+        sender.sendMessage(ChatColor.AQUA + "/" + label + " start <후보수> <월드컵이름>");
         sender.sendMessage(ChatColor.AQUA + "/" + label + " stop - 월드컵 중지");
         sender.sendMessage(ChatColor.AQUA + "/" + label + " fetchsources [force] [병렬개수] - URL 후보 준비");
         sender.sendMessage(ChatColor.AQUA + "/" + label + " buildpack [픽셀수] [fps] [병렬개수] [팩이름] - 리소스팩 생성");
-        sender.sendMessage(ChatColor.AQUA + "/" + label + " unpack [force] - resourcepack.zip에서 복원본 추출");
         sender.sendMessage(ChatColor.AQUA + "/" + label + " status - 진행 상태 확인");
-        sender.sendMessage(ChatColor.AQUA + "/" + label + " forcewin <left(왼쪽)|right(오른쪽)> - 강제 승리");
         sender.sendMessage(ChatColor.AQUA + "/" + label + " play <번호> - 후보 미리보기 재생");
         sender.sendMessage(ChatColor.AQUA + "/" + label + " result - 최종 결과 창 열기");
         sender.sendMessage(ChatColor.AQUA + "/" + label + " rankingtest [개수] - 랭킹 스크롤 화면 테스트");

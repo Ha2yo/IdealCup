@@ -128,7 +128,7 @@ public final class IdealCupGame {
             return;
         }
         if (!isPowerOfTwo(size) || size < 2) {
-            sender.sendMessage(ChatColor.RED + "참가자 수는 2 이상의 2의 거듭제곱이어야 합니다.");
+            sender.sendMessage(ChatColor.RED + "후보 수는 2 이상의 2의 거듭제곱이어야 합니다.");
             return;
         }
         candidateRepository.reload();
@@ -181,20 +181,6 @@ public final class IdealCupGame {
         if (announce) {
             Bukkit.broadcastMessage(ChatColor.RED + "이상형 월드컵이 중지되었습니다.");
         }
-    }
-
-    public void forceWin(VoteChoice choice, Player sender) {
-        if (!isRunning() || currentMatch == null) {
-            sender.sendMessage(ChatColor.RED + "진행 중인 경기가 없습니다.");
-            return;
-        }
-        cancelTasks();
-        Candidate winner = choice == VoteChoice.LEFT ? currentMatch.left() : currentMatch.right();
-        Candidate loser = choice == VoteChoice.LEFT ? currentMatch.right() : currentMatch.left();
-        long leftVotes = votes.values().stream().filter(voteChoice -> voteChoice == VoteChoice.LEFT).count();
-        long rightVotes = votes.values().stream().filter(voteChoice -> voteChoice == VoteChoice.RIGHT).count();
-        recordMatchVotes(leftVotes, rightVotes);
-        finishMatch(winner, loser, "관리자가 결과를 강제 처리했습니다.");
     }
 
     public void preview(Candidate candidate) {

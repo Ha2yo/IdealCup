@@ -1,6 +1,5 @@
 package org.ha2yo.idealCup.visual;
 
-import net.kyori.adventure.key.Key;
 import net.kyori.adventure.text.Component;
 import net.kyori.adventure.text.format.NamedTextColor;
 import net.kyori.adventure.text.format.TextColor;
@@ -43,13 +42,6 @@ public final class CandidateDisplay {
     private static final double IMAGE_DEPTH = 0.05D;
     private static final double IMAGE_FRONT_DEPTH = 0.06D;
     private static final double TEXT_DEPTH = 0.085D;
-    private static final Key TITLE_SHADE_FONT = Key.key("idealcup", "title_shade");
-    private static final String TITLE_SHADE_GLYPH = "\uE000";
-    private static final double TITLE_SHADE_DEPTH = 0.11D;
-    private static final double TITLE_SHADE_HEIGHT = 0.30D;
-    private static final double TITLE_SHADE_GLYPH_WIDTH = 0.64D;
-    private static final double TITLE_SHADE_GLYPH_HEIGHT = 0.16D;
-    private static final int TITLE_SHADE_SEGMENTS = 7;
     private static final double TITLE_BAR_DEPTH = BOARD_BACKGROUND_DEPTH + 0.001D;
     private static final double TITLE_TEXT_DEPTH = TEXT_DEPTH;
     private static final double TEXT_OUTLINE_OFFSET = 0.035D;
@@ -514,28 +506,6 @@ public final class CandidateDisplay {
         return Component.text("VS", TextColor.color(0xFFD37A));
     }
 
-    private Component gradientText(String text, TextColor startColor, TextColor endColor) {
-        if (text.isEmpty()) {
-            return Component.empty();
-        }
-        Component result = Component.empty();
-        int last = Math.max(1, text.length() - 1);
-        for (int index = 0; index < text.length(); index++) {
-            double progress = (double) index / (double) last;
-            result = result.append(Component.text(String.valueOf(text.charAt(index)), lerpColor(startColor, endColor, progress)));
-        }
-        return result;
-    }
-
-    private TextColor lerpColor(TextColor startColor, TextColor endColor, double progress) {
-        int start = startColor.value();
-        int end = endColor.value();
-        int red = (int) Math.round(lerp((start >> 16) & 0xFF, (end >> 16) & 0xFF, progress));
-        int green = (int) Math.round(lerp((start >> 8) & 0xFF, (end >> 8) & 0xFF, progress));
-        int blue = (int) Math.round(lerp(start & 0xFF, end & 0xFF, progress));
-        return TextColor.color(red, green, blue);
-    }
-
     private List<ScrollingImage> spawnRankingImages(BoardSpec board, List<RankingRow> rows, int limit, double baseY, double rowGap) {
         int imageCount = limit;
         List<ScrollingImage> images = new ArrayList<>();
@@ -546,8 +516,10 @@ public final class CandidateDisplay {
         double imageAreaWidth = board.width() * 0.22D;
         double imageAreaHeight = rowGap * 0.68D;
         double x = 0.0D;
-        double rankScale = 3.4D;
-        double winsScale = 2.8D;
+        double textBase = Math.max(0.8D, Math.min(rowGap, board.width() / 5.5D));
+        double preferredRankScale = clamp(textBase * 0.78D, 1.4D, 4.4D);
+        double preferredLabelScale = clamp(textBase * 0.62D, 1.1D, 3.4D);
+        double preferredWinsScale = clamp(textBase * 0.68D, 1.2D, 3.6D);
         double rankY = baseY + board.height() * 0.18D;
         for (int index = 0; index < imageCount; index++) {
             RankingRow row = rows.get(index);
@@ -558,7 +530,10 @@ public final class CandidateDisplay {
             DisplaySize size = fitImageSize(candidate, imageAreaWidth, imageAreaHeight);
             String rank = (index + 1) + "위";
             String label = row.name();
-            double labelScale = fitTextScale(row.name(), 2.7D, imageAreaWidth * 2.15D);
+            String stats = row.statText();
+            double rankScale = fitTextScale(rank, preferredRankScale, imageAreaWidth * 1.4D);
+            double labelScale = fitTextScale(label, preferredLabelScale, imageAreaWidth * 2.15D);
+            double winsScale = fitTextScale(stats, preferredWinsScale, imageAreaWidth * 2.3D);
             double y = rankY - RANKING_TEXT_EDGE_GAP - size.height() / 2.0D;
             double labelY = y - size.height() / 2.0D - RANKING_LABEL_EDGE_GAP;
             double statY = labelY - RANKING_STAT_LINE_GAP;
@@ -566,7 +541,7 @@ public final class CandidateDisplay {
                     candidate,
                     rank,
                     label,
-                    row.statText(),
+                    stats,
                     board.locationAt(x, y, IMAGE_DEPTH),
                     board.locationAt(x, rankY, TEXT_DEPTH),
                     board.locationAt(x, labelY, TEXT_DEPTH),
@@ -679,11 +654,6 @@ public final class CandidateDisplay {
         }
     }
 
-    private void spawnTitle(BoardSpec board, TextLayout textLayout, String title) {
-        double titleScale = fitTitleScale(board, textLayout, title);
-        spawnTitle(board, textLayout, title, titleScale);
-    }
-
     private void spawnTitle(BoardSpec board, TextLayout textLayout, String title, double titleScale) {
         spawnTitleBackground(board, textLayout);
         spawnTitleText(title, board.locationAt(0.0D, textLayout.titleTextY(), TITLE_TEXT_DEPTH), board.yaw(), titleScale);
@@ -701,36 +671,6 @@ public final class CandidateDisplay {
                     new Vector3f((float) board.width(), (float) textLayout.titleBarHeight(), 0.02F),
                     new AxisAngle4f(0.0F, 0.0F, 1.0F, 0.0F)
             ));
-        });
-        display.addScoreboardTag(DISPLAY_TAG);
-        entities.add(display);
-    }
-
-    private void spawnTitleShade(BoardSpec board, TextLayout textLayout, double titleScale) {
-        double segmentWidth = board.width() / TITLE_SHADE_SEGMENTS;
-        double height = Math.max(0.42D, titleScale * TITLE_SHADE_HEIGHT);
-        double y = textLayout.titleY();
-        for (int index = 0; index < TITLE_SHADE_SEGMENTS; index++) {
-            double x = -board.width() / 2.0D + segmentWidth * (index + 0.5D);
-            spawnTitleShadeSegment(board, x, y, segmentWidth * 1.03D, height);
-        }
-    }
-
-    private void spawnTitleShadeSegment(BoardSpec board, double x, double y, double width, double height) {
-        Location location = board.locationAt(x, y, TITLE_SHADE_DEPTH);
-        TextDisplay display = location.getWorld().spawn(location, TextDisplay.class, textDisplay -> {
-            textDisplay.text(Component.text(TITLE_SHADE_GLYPH, NamedTextColor.WHITE).font(TITLE_SHADE_FONT));
-            textDisplay.setBillboard(Display.Billboard.FIXED);
-            textDisplay.setRotation(board.yaw(), 0.0F);
-            textDisplay.setAlignment(TextDisplay.TextAlignment.CENTER);
-            textDisplay.setShadowed(false);
-            textDisplay.setSeeThrough(false);
-            textDisplay.setTextOpacity((byte) 255);
-            textDisplay.setLineWidth(1000);
-            textDisplay.setDefaultBackground(false);
-            textDisplay.setBackgroundColor(Color.fromARGB(0, 0, 0, 0));
-            textDisplay.setBrightness(new Display.Brightness(13, 13));
-            textDisplay.setTransformation(textTransform(width / TITLE_SHADE_GLYPH_WIDTH, height / TITLE_SHADE_GLYPH_HEIGHT));
         });
         display.addScoreboardTag(DISPLAY_TAG);
         entities.add(display);

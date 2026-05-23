@@ -1,20 +1,59 @@
 timing:
   preview-seconds: 0
-  vote-seconds: 20
+  vote-seconds: 10
   result-seconds: 3
   round-transition-seconds: 5
-  debate-seconds: 20
+  debate-seconds: 15
 
 display:
   image-scale: 4.0
   text-y-offset: 2.4
 
 locations:
-  pos1: null
-  pos2: null
-  lobby: null
-  cinema: null
+  pos1:
+    world: world
+    x: -15.3
+    y: -58.0
+    z: -41.7
+    yaw: 90.0
+    pitch: 0.0
+  pos2:
+    world: world
+    x: -15.3
+    y: -43.0
+    z: -5.3
+    yaw: 90.0
+    pitch: 0.0
+  debate-left:
+    world: world
+    x: -17.5
+    y: -54.0
+    z: -33.5
+    yaw: 90.0
+    pitch: 0.0
+  debate-right:
+    world: world
+    x: -17.5
+    y: -53.0
+    z: -13.5
+    yaw: 90.0
+    pitch: 0.0
+  lobby:
+    world: world
+    x: -41.5
+    y: -60.0
+    z: -7.5
+    yaw: -90.0
+    pitch: 0,0
+  cinema:
+    world: world
+    x: -43.7
+    y: -60.0
+    z: -0.3
+    yaw: -90.0
+    pitch: 0.0
 
 ending-bgm:
   enabled: true
-  gap-seconds: 1.0
+  gap-seconds: 10.0
+  default-seconds: 120

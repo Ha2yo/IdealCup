@@ -1,29 +1,36 @@
 # IdealCup
 
-Minecraft Paper 서버에서 이미지 후보들을 띄워 이상형 월드컵을 진행하는 플러그인입니다. 
-후보 이미지는 리소스팩으로 준비하고, 게임 중에는 플레이어가 화면의 왼쪽/오른쪽 후보를 바라본 뒤 마우스 아이템으로 투표합니다.
+Minecraft Paper 서버에서 이미지 후보를 띄워 이상형 월드컵을 진행하는 플러그인입니다.
+후보 이미지는 리소스팩으로 표시하고, 플레이어는 화면의 왼쪽/오른쪽 후보를 바라본 뒤 마우스 아이템을 우클릭해 투표합니다.
 
 ## 요구 사항
 
 - Paper 1.21.x
+- Java 21 이상
+- 후보 이미지를 보려면 플레이어가 생성된 리소스팩을 적용해야 합니다.
 
 ## 명령어
 
-관리 명령어는 `idealcup.admin` 권한이 필요합니다. 기본값은 OP입니다. `/idealcup`은 `/icup`으로도 사용할 수 있습니다.
+관리 명령어는 `idealcup.admin` 권한이 필요합니다. 기본값은 OP입니다.
+`/idealcup`은 `/icup`으로도 사용할 수 있습니다.
 
 | 명령어 | 설명 |
 | --- | --- |
-| `/idealcup start <월드컵이름> <참가자수>` | 이상형 월드컵을 시작합니다. 참가자 수는 2 이상의 2의 거듭제곱이어야 합니다. 예: `/idealcup start 음식 월드컵 32` |
+| `/idealcup start <후보수> <월드컵이름>` | 월드컵을 시작합니다. 후보 수는 2 이상의 2의 거듭제곱이어야 합니다. 예: `/idealcup start 64 애니 월드컵 64강` |
 | `/idealcup stop` | 진행 중인 월드컵을 중지합니다. |
-| `/idealcup buildpack` | `plugins/IdealCup/resourcepack-src`를 바탕으로 서버 최상위 폴더에 `resourcepack.zip`을 생성합니다. |
-| `/idealcup unpack` | 서버 최상위 `resourcepack.zip`에서 복원본을 추출합니다. `resourcepack-src`가 이미 있으면 원본 보호를 위해 `resourcepack-src-restored`에 풉니다. |
-| `/idealcup unpack force` | 기존 `resourcepack-src`는 지우지 않고, 복원 대상 폴더만 덮어씁니다. 복원 이미지는 변환된 PNG입니다. |
+| `/idealcup fetchsources [force] [병렬개수]` | `sources.yml` 또는 URL이 들어간 `resourcepack-src/candidates.yml`을 바탕으로 후보 영상을 준비합니다. |
+| `/idealcup buildpack [픽셀수] [fps] [병렬개수] [팩이름]` | `resourcepack-src`를 바탕으로 서버 최상위 폴더에 `resourcepack.zip`을 생성합니다. |
 | `/idealcup status` | 현재 진행 상태를 확인합니다. |
-| `/idealcup forcewin <left\|right>` | 현재 경기의 왼쪽 또는 오른쪽 후보를 강제로 승리 처리합니다. |
+| `/idealcup play <번호>` | 특정 후보를 보드에 미리 표시합니다. |
+| `/idealcup result` | 최종 결과 창을 엽니다. 이 명령은 일반 플레이어도 사용할 수 있습니다. |
+| `/idealcup rankingtest [개수]` | 랭킹 스크롤 화면을 테스트합니다. |
+| `/idealcup packready <player>` | 지정한 플레이어를 관람 위치로 이동시킵니다. |
 | `/idealcup set pos1` | 후보 표시 영역의 첫 번째 꼭짓점을 현재 위치로 저장합니다. |
 | `/idealcup set pos2` | 후보 표시 영역의 두 번째 꼭짓점을 현재 위치로 저장합니다. |
 | `/idealcup set debate-left` | 동점 변론 때 왼쪽 후보 측 대표가 이동할 위치를 저장합니다. |
 | `/idealcup set debate-right` | 동점 변론 때 오른쪽 후보 측 대표가 이동할 위치를 저장합니다. |
+| `/idealcup set lobby` | 접속 시 이동할 대기 위치를 저장합니다. |
+| `/idealcup set cinema` | 리소스팩 준비 완료 후 이동할 관람 위치를 저장합니다. |
 | `/idealcup set debatetime <초>` | 동점 변론 시간을 설정합니다. |
 | `/idealcup set votetime <초>` | 투표 시간을 설정합니다. |
 
@@ -37,7 +44,8 @@ Minecraft Paper 서버에서 이미지 후보들을 띄워 이상형 월드컵�
 
 ## 리소스팩 준비
 
-IdealCup은 서버 최상위 폴더의 `resourcepack.zip`을 읽어 후보를 불러옵니다. `resourcepack.zip`은 `/idealcup buildpack` 명령으로 생성합니다.
+IdealCup은 서버 최상위 폴더의 `resourcepack.zip`을 읽어 후보를 불러옵니다.
+`resourcepack.zip`은 `/idealcup buildpack` 명령으로 생성합니다.
 
 ### 1. 원본 폴더 준비
 
@@ -50,19 +58,17 @@ plugins/
       candidates.yml
       images/
         01.png
-        02.png
-        ...
+        02.jpg
+        03.gif
+        04.mp4
+      sounds/
+        ending_theme.ogg
+        ending_theme2.mp3
 ```
 
-### 2. 후보 이미지 넣기
+### 2. 후보 목록 작성
 
-후보 이미지는 PNG, JPG, JPEG, WebP 파일로 준비할 수 있습니다. 경로는 후보 ID 기준으로 고정됩니다. 예를 들어 후보 ID가 `01`이면 `images/01.png`, `images/01.jpg`, `images/01.jpeg`, `images/01.webp` 순서로 찾습니다.
-
-파일명과 후보 ID는 원하는 값으로 둘 수 있지만, 영문 소문자, 숫자, `_`, `-` 조합을 추천합니다. 예시는 `01.png`부터 `64.png`까지 64강용 이미지가 들어가는 구조입니다.
-
-### 3. `candidates.yml` 작성
-
-`plugins/IdealCup/resourcepack-src/candidates.yml`에 후보 목록을 작성합니다. `image`는 쓰지 않아도 됩니다.
+`plugins/IdealCup/resourcepack-src/candidates.yml`에 후보 목록을 작성합니다.
 
 ```yaml
 candidates:
@@ -72,67 +78,156 @@ candidates:
     name: '후보 이름 2'
 ```
 
-- `name`: 게임 화면과 결과에 표시될 후보 이름
-- 원본 이미지 경로: 후보 ID 기준 `images/<id>.png`, `images/<id>.jpg`, `images/<id>.jpeg`, `images/<id>.webp` 중 자동 탐색
-- 리소스팩 내부 이미지 경로: 항상 `images/<id>.png`로 변환
-- 리소스팩 내부 이미지 크기: 긴 변 최대 512px, 비율 유지, 작은 이미지는 확대하지 않음
+- `name`: 게임 화면, 결과 창, 랭킹 화면에 표시될 후보 이름
+- 후보 미디어 경로: 후보 ID 기준 `images/<id>.png`, `.jpg`, `.jpeg`, `.webp`, `.gif`, `.mp4`, `.mkv`, `.mov` 중 자동 탐색
+- 영상 후보는 빌드 과정에서 프레임 이미지와 재생용 음성으로 변환됩니다.
+- 최종 랭킹 BGM은 `ending_theme.ogg`, `ending_theme2.mp3`처럼 `ending_theme` 이름으로 시작하는 파일을 사용합니다.
+
+### 3. URL 후보 준비
+
+직접 파일을 넣는 대신 URL로 후보 영상을 준비할 수도 있습니다.
+`plugins/IdealCup/sources.yml`을 작성하거나, `resourcepack-src/candidates.yml`에 `url`, `start`, `duration`을 넣은 뒤 실행합니다.
+
+```yaml
+candidates:
+  '01':
+    name: '후보 이름 1'
+    url: 'https://example.com/video'
+    start: 12.5
+    duration: 8
+```
+
+```text
+/idealcup fetchsources
+```
+
+- `force`를 붙이면 기존 다운로드 파일을 덮어씁니다.
+- 병렬 개수는 1부터 8까지 지정할 수 있습니다.
+- 처음 실행 시 필요한 보조 도구가 없으면 플러그인이 다운로드를 시도합니다.
 
 ### 4. 리소스팩 생성
 
-서버 안에서 OP 또는 `idealcup.admin` 권한으로 실행합니다.
+서버 안에서 OP 권한으로 실행합니다.
 
 ```text
 /idealcup buildpack
 ```
 
-성공하면 서버 최상위 폴더에 `resourcepack.zip`이 생성됩니다. 원본이 JPG/JPEG/WebP여도 zip 안에는 긴 변 512px 이하의 PNG로 변환되어 들어갑니다. 플러그인은 이 zip 안의 `candidates.yml`, `images/<id>.png`, 생성된 모델 파일을 읽습니다.
+기본값은 최대 픽셀 `256`, 애니메이션 `5fps`, 병렬 처리 `2개`입니다.
+필요하면 다음처럼 조절할 수 있습니다.
 
-`/idealcup buildpack`은 후보 이미지마다 다음 파일을 자동 생성합니다.
+```text
+/idealcup buildpack 512 10 4 아이스크림 월드컵
+```
 
-- `assets/idealcup/models/item/candidate_<id>.json`
-- `assets/idealcup/items/candidate_<id>.json`
-- `assets/idealcup/textures/item/...`
+- `픽셀수`: 16 이상 2048 이하
+- `fps`: 1 이상 20 이하
+- `병렬개수`: 1 이상 8 이하
+- `팩이름`: 리소스팩 설명에 들어갈 이름
 
-`pack.mcmeta`와 `assets/idealcup/...` 폴더는 마인크래프트 리소스팩 규격 때문에 zip 안에 생성됩니다. 직접 편집하는 원본 폴더는 `resourcepack-src/candidates.yml`과 `resourcepack-src/images`만 관리하면 됩니다.
-
-`resourcepack-src`를 잃어버렸다면 `/idealcup unpack`으로 `resourcepack.zip`에서 다시 만들 수 있습니다. 단, 복원되는 이미지는 buildpack 때 변환된 512px 이하 PNG이며, 원래 넣었던 JPG/JPEG/WebP/영상 고해상도 파일로 돌아가지는 않습니다. 기존 `resourcepack-src`가 있을 때는 원본 열화를 막기 위해 `/idealcup unpack` 결과를 `resourcepack-src-restored`에 추출합니다.
+성공하면 서버 최상위 폴더에 `resourcepack.zip`이 생성됩니다.
+후보가 많거나 용량이 크면 `resourcepack-parts` 폴더에 분할 리소스팩도 함께 생성될 수 있습니다.
 
 ### 5. 클라이언트에 적용
 
-생성된 `resourcepack.zip`을 플레이어가 적용해야 후보 이미지가 정상 표시됩니다. 서버 리소스팩으로 강제하려면 `server.properties`의 `resource-pack`에 배포 URL을 넣고, 필요하면 `resource-pack-sha1`도 함께 설정하세요.
-
-로컬 테스트만 할 때는 생성된 `resourcepack.zip`을 클라이언트의 리소스팩 폴더에 넣고 직접 적용해도 됩니다.
+생성된 `resourcepack.zip`을 플레이어가 적용해야 후보 이미지가 정상 표시됩니다.
+서버 리소스팩으로 배포하려면 `server.properties`의 `resource-pack`에 배포 URL을 설정하세요.
 
 ## 게임 진행 순서
 
-1. `/idealcup set pos1`, `/idealcup set pos2`로 후보 표시 영역을 잡습니다.
-2. 필요하면 `/idealcup set debate-left`, `/idealcup set debate-right`로 동점 변론 위치를 잡습니다.
-3. `/idealcup buildpack`으로 `resourcepack.zip`을 생성합니다.
-4. 플레이어가 리소스팩을 적용했는지 확인합니다.
-5. `/idealcup start <월드컵이름> <참가자수>`로 시작합니다.
-6. 투표 시간에는 후보를 바라보고 마우스 아이템을 우클릭합니다.
-7. 동점이면 양쪽 투표자 중 대표가 뽑혀 변론을 진행하고, 다시 투표합니다.
-8. 마지막 후보가 남으면 우승 기록이 `config.yml`의 `history`에 저장됩니다.
+1. 필요하면 `/idealcup set pos1`, `/idealcup set pos2`로 게임이 진행될 보드의 영역을 설정합니다.
+2. 필요하면 `/idealcup set debate-left`, `/idealcup set debate-right`, `/idealcup set lobby`, `/idealcup set cinema`로 이동 위치를 잡습니다.
+3. `resourcepack-src/candidates.yml`과 후보 미디어를 준비합니다.
+4. `/idealcup buildpack`으로 `resourcepack.zip`을 생성합니다.
+5. 플레이어가 리소스팩을 적용했는지 확인합니다.
+6. `/idealcup start <후보수> <월드컵이름>`으로 시작합니다.
+7. 투표 시간에는 후보를 바라보고 마우스 아이템을 우클릭합니다.
+8. 동점이면 양쪽 투표자 중 대표가 뽑혀 변론을 진행하고, 변론 후 다시 투표합니다.
+9. 마지막 후보가 남으면 최종 랭킹 화면과 결과 창을 표시합니다.
 
 ## 설정
 
-`plugins/IdealCup/config.yml`에서 시간을 조정할 수 있습니다.
+최초 실행 시 `plugins/IdealCup/config.yml`이 생성됩니다.
+현재 기본값은 다음과 같습니다.
 
 ```yaml
 timing:
   preview-seconds: 0
-  vote-seconds: 20
+  vote-seconds: 10
   result-seconds: 3
   round-transition-seconds: 5
-  debate-seconds: 20
+  debate-seconds: 15
+
+display:
+  image-scale: 4.0
+  text-y-offset: 2.4
+
+locations:
+  pos1:
+    world: world
+    x: -15.3
+    y: -58.0
+    z: -41.7
+    yaw: 90.0
+    pitch: 0.0
+  pos2:
+    world: world
+    x: -15.3
+    y: -43.0
+    z: -5.3
+    yaw: 90.0
+    pitch: 0.0
+  debate-left:
+    world: world
+    x: -17.5
+    y: -54.0
+    z: -33.5
+    yaw: 90.0
+    pitch: 0.0
+  debate-right:
+    world: world
+    x: -17.5
+    y: -53.0
+    z: -13.5
+    yaw: 90.0
+    pitch: 0.0
+  lobby:
+    world: world
+    x: -41.5
+    y: -60.0
+    z: -7.5
+    yaw: -90.0
+    pitch: 0,0
+  cinema:
+    world: world
+    x: -43.7
+    y: -60.0
+    z: -0.3
+    yaw: -90.0
+    pitch: 0.0
+
+ending-bgm:
+  enabled: true
+  gap-seconds: 10.0
+  default-seconds: 120
 ```
 
-주요 항목은 다음과 같습니다.
+### 설정 항목
 
-- `preview-seconds`: 후보가 표시된 뒤 투표로 넘어가기까지의 시간
-- `vote-seconds`: 투표 시간
-- `result-seconds`: 경기 결과 표시 시간
-- `round-transition-seconds`: 첫 라운드 시작 전 대기 시간
-- `debate-seconds`: 동점 변론 시간
+- `timing.preview-seconds`: 후보가 표시된 뒤 투표로 넘어가기까지의 시간
+- `timing.vote-seconds`: 투표 시간
+- `timing.result-seconds`: 경기 결과 표시 시간
+- `timing.round-transition-seconds`: 라운드 전환 대기 시간
+- `timing.debate-seconds`: 동점 변론 시간
+- `locations.pos1`, `locations.pos2`: 보드 표시 영역
+- `locations.debate-left`, `locations.debate-right`: 동점 변론 대표 이동 위치
+- `locations.lobby`: 플레이어 접속 시 이동 위치
+- `locations.cinema`: 리소스팩 준비 완료 후 이동 위치
+- `ending-bgm.enabled`: 최종 랭킹 화면 BGM 사용 여부
+- `ending-bgm.gap-seconds`: 최종 랭킹 BGM 사이 간격
+- `ending-bgm.default-seconds`: BGM 길이를 알 수 없을 때 사용할 기본 길이
 
-위치 설정은 명령어로 저장하는 것을 권장합니다.
+## 결과 기록
+
+월드컵 종료 후 결과 기록은 `plugins/IdealCup/history.yml`에 저장됩니다.
+최종 결과는 `/idealcup result`로 다시 열 수 있습니다.

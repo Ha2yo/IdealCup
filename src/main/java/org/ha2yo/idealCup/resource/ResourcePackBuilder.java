@@ -42,16 +42,12 @@ import java.util.zip.Deflater;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipInputStream;
 import java.util.zip.ZipOutputStream;
-import java.util.zip.ZipFile;
 
 public final class ResourcePackBuilder {
     private static final String SOURCE_FOLDER = "resourcepack-src";
-    private static final String RESTORED_SOURCE_FOLDER = "resourcepack-src-restored";
-    private static final String SOURCE_BACKUP_FILE = "resourcepack-src-backup.zip";
     private static final String BUILD_FOLDER = "resourcepack-build";
     private static final String PACK_FILE = "resourcepack.zip";
     private static final String SPLIT_PACK_FOLDER = "resourcepack-parts";
-    private static final String TITLE_SHADE_FONT_NAME = "title_shade";
     private static final String BASE_SPLIT_PACK_FILE = "idealcup-base.zip";
     private static final String MEDIA_SPLIT_PACK_PREFIX = "idealcup-media-";
     private static final long SPLIT_PACK_MAX_BYTES = 180L * 1024L * 1024L;
@@ -110,7 +106,7 @@ public final class ResourcePackBuilder {
         List<String> warnings = new ArrayList<>();
         File sourceFolder = new File(plugin.getDataFolder(), SOURCE_FOLDER);
         if (!sourceFolder.isDirectory()) {
-            warnings.add("plugins/IdealCup/resourcepack-src 폴더가 없습니다. resourcepack.zip에서 복원하려면 /idealcup unpack을 실행하세요.");
+            warnings.add("plugins/IdealCup/resourcepack-src 폴더가 없습니다.");
             return new BuildResult(false, 0, warnings);
         }
 
@@ -134,7 +130,6 @@ public final class ResourcePackBuilder {
         try {
             registerImageReaders();
             recreateFolder(buildFolder.toPath());
-            writeTitleShadeAssets(buildFolder);
             writePackMeta(sourceFolder, buildFolder, packDescription);
             copyPackIcon(sourceFolder, buildFolder);
             Files.copy(manifestFile.toPath(), new File(buildFolder, MANIFEST_PATH).toPath(), java.nio.file.StandardCopyOption.REPLACE_EXISTING);
@@ -194,14 +189,9 @@ public final class ResourcePackBuilder {
             return new BuildResult(true, builtCandidates, warnings);
         } catch (IOException exception) {
             cleanupBuildFolder(buildFolder.toPath(), warnings);
-            warnings.add("resourcepack.zip 또는 원본 백업을 쓸 수 없습니다: " + exception.getMessage());
+            warnings.add("resourcepack.zip을 쓸 수 없습니다: " + exception.getMessage());
             return new BuildResult(false, 0, warnings);
         }
-    }
-
-    public BuildResult unpack(boolean force) {
-        return unpack(force, message -> {
-        });
     }
 
     private CandidateBuildResult processCandidate(
@@ -227,7 +217,7 @@ public final class ResourcePackBuilder {
             if (isVideoFile(imageFile)) {
                 writeVideoCandidateTexture(sourceFolder, buildFolder, id, imageFile, imagePath);
                 writeCandidateModels(buildFolder, id, true);
-                String soundModel = writeCandidateSound(sourceFolder, buildFolder, id, imageFile) ? modelName(id) : null;
+                String soundModel = extractCandidateSound(imageFile, new File(buildFolder, "assets/idealcup/sounds/" + modelName(id) + ".ogg")) ? modelName(id) : null;
                 progress.accept(progressMessage);
                 return new CandidateBuildResult(true, soundModel, null);
             }
@@ -241,9 +231,8 @@ public final class ResourcePackBuilder {
                 }
                 writeAnimatedPngSource(buildFolder, id, imageFile);
                 writeCandidateModels(buildFolder, id, true);
-                String soundModel = writeCandidateSound(sourceFolder, buildFolder, id, imageFile) ? modelName(id) : null;
                 progress.accept(progressMessage);
-                return new CandidateBuildResult(true, soundModel, null);
+                return new CandidateBuildResult(true, null, null);
             }
 
             BufferedImage image = ImageIO.read(imageFile);
@@ -262,9 +251,8 @@ public final class ResourcePackBuilder {
                 writeCandidateTexture(buildFolder, id, outputImage);
                 writeCandidateModels(buildFolder, id, false);
             }
-            String soundModel = writeCandidateSound(sourceFolder, buildFolder, id, imageFile) ? modelName(id) : null;
             progress.accept(progressMessage);
-            return new CandidateBuildResult(true, soundModel, null);
+            return new CandidateBuildResult(true, null, null);
         } catch (IOException exception) {
             String warning = "후보 " + id + " 제외: " + exception.getMessage();
             warningProgress.accept(progressMessage, warning);
@@ -277,100 +265,6 @@ public final class ResourcePackBuilder {
             return Math.max(1, Math.min(Math.min(requestedWorkerCount, 8), totalCandidates));
         }
         return Math.max(1, Math.min(2, totalCandidates));
-    }
-
-    public BuildResult unpack(boolean force, Consumer<String> progress) {
-        List<String> warnings = new ArrayList<>();
-        File packFile = resourcePackFile();
-        if (!packFile.isFile()) {
-            warnings.add("서버 resourcepack.zip이 없습니다.");
-            return new BuildResult(false, 0, warnings);
-        }
-
-        File sourceFolder = new File(plugin.getDataFolder(), SOURCE_FOLDER);
-        File targetFolder = sourceFolder.exists() ? new File(plugin.getDataFolder(), RESTORED_SOURCE_FOLDER) : sourceFolder;
-        progress.accept("복원 대상 폴더: plugins/IdealCup/" + targetFolder.getName());
-        if (targetFolder.exists()) {
-            if (!force) {
-                warnings.add("plugins/IdealCup/" + targetFolder.getName() + " 폴더가 이미 있습니다. 덮어쓰려면 /idealcup unpack force를 사용하세요.");
-                return new BuildResult(false, 0, warnings);
-            }
-            try {
-                deleteFolder(targetFolder.toPath());
-            } catch (IOException exception) {
-                warnings.add("기존 " + targetFolder.getName() + "를 지울 수 없습니다: " + exception.getMessage());
-                return new BuildResult(false, 0, warnings);
-            }
-        }
-
-        File backupFile = sourceBackupFile();
-        if (backupFile.isFile()) {
-            try (ZipFile zipFile = new ZipFile(backupFile, StandardCharsets.UTF_8)) {
-                progress.accept("resourcepack-src-backup.zip을 읽고 있습니다.");
-                Integer originalImageCount = restoreOriginalSourceFolder(zipFile, targetFolder, progress);
-                if (originalImageCount != null) {
-                    progress.accept("백업된 원본 소스를 복원했습니다.");
-                    return new BuildResult(true, originalImageCount, warnings);
-                }
-            } catch (IOException exception) {
-                warnings.add("resourcepack-src-backup.zip을 복원할 수 없습니다: " + exception.getMessage());
-            }
-        }
-
-        try (ZipFile zipFile = new ZipFile(packFile, StandardCharsets.UTF_8)) {
-            progress.accept("resourcepack.zip을 읽고 있습니다.");
-            ZipEntry manifestEntry = firstEntry(zipFile, MANIFEST_PATH, "assets/idealcup/candidates.yml");
-            if (manifestEntry == null) {
-                warnings.add("resourcepack.zip 안에 candidates.yml 파일이 없습니다.");
-                return new BuildResult(false, 0, warnings);
-            }
-
-            Files.createDirectories(targetFolder.toPath());
-            copyZipEntry(zipFile, manifestEntry, new File(targetFolder, MANIFEST_PATH).toPath());
-
-            int imageCount = 0;
-            int copiedImages = 0;
-            var entries = zipFile.entries();
-            while (entries.hasMoreElements()) {
-                ZipEntry entry = entries.nextElement();
-                String entryName = entry.getName().replace('\\', '/');
-                if (entry.isDirectory() || !entryName.endsWith(".png")) {
-                    continue;
-                }
-
-                String imageName = sourceImageName(entryName);
-                if (imageName == null) {
-                    continue;
-                }
-
-                if (restoreAnimatedPngIfPresent(zipFile, imageName, targetFolder)) {
-                    restoreCandidateSoundIfPresent(zipFile, imageName, targetFolder);
-                    imageCount++;
-                    copiedImages++;
-                    if (copiedImages == 1 || copiedImages % 10 == 0) {
-                        progress.accept("이미지 복원 중: " + copiedImages + "개");
-                    }
-                    continue;
-                }
-
-                copyPngImageEntry(zipFile, entry, new File(targetFolder, "images/" + imageName).toPath());
-                restoreCandidateSoundIfPresent(zipFile, imageName, targetFolder);
-                imageCount++;
-                copiedImages++;
-                if (copiedImages == 1 || copiedImages % 10 == 0) {
-                    progress.accept("이미지 복원 중: " + copiedImages + "개");
-                }
-            }
-
-            if (imageCount == 0) {
-                warnings.add("resourcepack.zip에서 복원할 images/*.png 파일을 찾지 못했습니다.");
-                return new BuildResult(false, 0, warnings);
-            }
-            return new BuildResult(true, imageCount, warnings);
-        } catch (IOException exception) {
-            warnings.add("resourcepack.zip을 복원할 수 없습니다: " + exception.getMessage());
-            return new BuildResult(false, 0, warnings);
-        }
     }
 
     public static String modelName(String id) {
@@ -431,40 +325,6 @@ public final class ResourcePackBuilder {
 
         Files.writeString(modelFile.toPath(), modelJson, StandardCharsets.UTF_8);
         Files.writeString(itemFile.toPath(), itemJson, StandardCharsets.UTF_8);
-    }
-
-    private void writeTitleShadeAssets(File buildFolder) throws IOException {
-        File fontFile = new File(buildFolder, "assets/idealcup/font/" + TITLE_SHADE_FONT_NAME + ".json");
-        File textureFile = new File(buildFolder, "assets/idealcup/textures/font/" + TITLE_SHADE_FONT_NAME + ".png");
-        Files.createDirectories(fontFile.toPath().getParent());
-        Files.createDirectories(textureFile.toPath().getParent());
-        ImageIO.write(titleShadeTexture(), "png", textureFile);
-        String fontJson = """
-                {
-                  "providers": [
-                    {
-                      "type": "bitmap",
-                      "file": "idealcup:font/%s.png",
-                      "ascent": 8,
-                      "height": 8,
-                      "chars": ["\\uE000"]
-                    }
-                  ]
-                }
-                """.formatted(TITLE_SHADE_FONT_NAME);
-        Files.writeString(fontFile.toPath(), fontJson, StandardCharsets.UTF_8);
-    }
-
-    private BufferedImage titleShadeTexture() {
-        int width = 128;
-        int height = 32;
-        BufferedImage image = new BufferedImage(width, height, BufferedImage.TYPE_INT_ARGB);
-        for (int y = 0; y < height; y++) {
-            for (int x = 0; x < width; x++) {
-                image.setRGB(x, y, 0x99000000);
-            }
-        }
-        return image;
     }
 
     private File sourceImageFile(File sourceFolder, String id) {
@@ -565,21 +425,6 @@ public final class ResourcePackBuilder {
             BufferedImage frame = image.getSubimage(0, index * frameHeight, frameWidth, frameHeight);
             writeFrameCandidateTextureAndModel(buildFolder, id, drawRgbImage(frame, frameWidth, frameHeight), index);
         }
-    }
-
-    private boolean writeCandidateSound(File sourceFolder, File buildFolder, String id, File mediaFile) throws IOException {
-        File soundFile = new File(sourceFolder, ("sounds/" + id + ".ogg").replace('/', File.separatorChar));
-        File targetFile = new File(buildFolder, "assets/idealcup/sounds/" + modelName(id) + ".ogg");
-        if (!soundFile.isFile()) {
-            if (!isVideoFile(mediaFile)) {
-                return false;
-            }
-            return extractCandidateSound(mediaFile, targetFile);
-        }
-
-        Files.createDirectories(targetFile.toPath().getParent());
-        Files.copy(soundFile.toPath(), targetFile.toPath(), java.nio.file.StandardCopyOption.REPLACE_EXISTING);
-        return true;
     }
 
     private boolean extractCandidateSound(File videoFile, File targetFile) throws IOException {
@@ -1342,74 +1187,6 @@ public final class ResourcePackBuilder {
         return new File(pluginsFolder.getParentFile(), PACK_FILE);
     }
 
-    private File sourceBackupFile() {
-        return new File(plugin.getDataFolder(), SOURCE_BACKUP_FILE);
-    }
-
-    private ZipEntry firstEntry(ZipFile zipFile, String... names) {
-        for (String name : names) {
-            ZipEntry entry = zipFile.getEntry(name);
-            if (entry != null) {
-                return entry;
-            }
-        }
-        return null;
-    }
-
-    private String sourceImageName(String entryName) {
-        if (entryName.startsWith("images/")) {
-            return entryName.substring("images/".length());
-        }
-        if (entryName.startsWith("assets/idealcup/candidates/")) {
-            return entryName.substring("assets/idealcup/candidates/".length());
-        }
-        return null;
-    }
-
-    private boolean restoreAnimatedPngIfPresent(ZipFile zipFile, String imageName, File sourceFolder) throws IOException {
-        if (!imageName.toLowerCase(Locale.ROOT).endsWith(".png")) {
-            return false;
-        }
-
-        String id = imageName.substring(0, imageName.length() - ".png".length());
-        String modelName = modelName(id);
-        ZipEntry animationEntry = zipFile.getEntry("assets/minecraft/textures/item/idealcup/" + modelName + ".png.mcmeta");
-        ZipEntry textureEntry = zipFile.getEntry("assets/minecraft/textures/item/idealcup/" + modelName + ".png");
-        if (animationEntry == null || textureEntry == null) {
-            return false;
-        }
-
-        AnimationSize animationSize = readAnimationSize(zipFile, animationEntry);
-        if (animationSize == null) {
-            return false;
-        }
-
-        copyZipEntry(zipFile, textureEntry, new File(sourceFolder, "images/" + id + ".png").toPath());
-        copyZipEntry(zipFile, animationEntry, new File(sourceFolder, "images/" + id + ".png.mcmeta").toPath());
-        return true;
-    }
-
-    private void restoreCandidateSoundIfPresent(ZipFile zipFile, String imageName, File sourceFolder) throws IOException {
-        if (!imageName.toLowerCase(Locale.ROOT).endsWith(".png")) {
-            return;
-        }
-
-        String id = imageName.substring(0, imageName.length() - ".png".length());
-        ZipEntry soundEntry = zipFile.getEntry("assets/idealcup/sounds/" + modelName(id) + ".ogg");
-        if (soundEntry == null) {
-            return;
-        }
-        copyZipEntry(zipFile, soundEntry, new File(sourceFolder, "sounds/" + id + ".ogg").toPath());
-    }
-
-    private AnimationSize readAnimationSize(ZipFile zipFile, ZipEntry animationEntry) throws IOException {
-        String json;
-        try (var inputStream = zipFile.getInputStream(animationEntry)) {
-            json = new String(inputStream.readAllBytes(), StandardCharsets.UTF_8);
-        }
-        return readAnimationSize(json);
-    }
-
     private AnimationSize readAnimationSize(Path animationPath) throws IOException {
         if (!Files.isRegularFile(animationPath)) {
             return null;
@@ -1432,70 +1209,6 @@ public final class ResourcePackBuilder {
             return null;
         }
         return new AnimationSize(width, height);
-    }
-
-    private void copyZipEntry(ZipFile zipFile, ZipEntry entry, Path target) throws IOException {
-        Path parent = target.getParent();
-        if (parent != null) {
-            Files.createDirectories(parent);
-        }
-        try (var inputStream = zipFile.getInputStream(entry)) {
-            Files.copy(inputStream, target, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
-        }
-    }
-
-    private Integer restoreOriginalSourceFolder(ZipFile zipFile, File targetFolder, Consumer<String> progress) throws IOException {
-        if (zipFile.getEntry(MANIFEST_PATH) == null) {
-            return null;
-        }
-
-        int copiedFiles = 0;
-        int imageCount = 0;
-        var entries = zipFile.entries();
-        while (entries.hasMoreElements()) {
-            ZipEntry entry = entries.nextElement();
-            if (entry.isDirectory()) {
-                continue;
-            }
-            String entryName = entry.getName().replace('\\', '/');
-            if (entryName.isBlank() || entryName.startsWith("/") || entryName.contains("../")) {
-                continue;
-            }
-
-            copyZipEntry(zipFile, entry, new File(targetFolder, entryName.replace('/', File.separatorChar)).toPath());
-            copiedFiles++;
-            if (entryName.startsWith("images/") && isSourceImageName(entryName.substring("images/".length()))) {
-                imageCount++;
-            }
-            if (copiedFiles == 1 || copiedFiles % 20 == 0) {
-                progress.accept("원본 소스 복원 중: " + copiedFiles + "개");
-            }
-        }
-        return imageCount;
-    }
-
-    private boolean isSourceImageName(String fileName) {
-        String lowerName = fileName.toLowerCase(Locale.ROOT);
-        for (String extension : SOURCE_EXTENSIONS) {
-            if (lowerName.endsWith("." + extension)) {
-                return true;
-            }
-        }
-        return false;
-    }
-
-    private void copyPngImageEntry(ZipFile zipFile, ZipEntry entry, Path target) throws IOException {
-        Path parent = target.getParent();
-        if (parent != null) {
-            Files.createDirectories(parent);
-        }
-        try (var inputStream = zipFile.getInputStream(entry)) {
-            BufferedImage image = ImageIO.read(inputStream);
-            if (image == null) {
-                throw new IOException("올바른 이미지가 아닙니다: " + entry.getName());
-            }
-            ImageIO.write(normalizeImage(image), "png", target.toFile());
-        }
     }
 
     private void recreateFolder(Path folder) throws IOException {
