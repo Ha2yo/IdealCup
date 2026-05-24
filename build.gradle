@@ -104,7 +104,7 @@ tasks.register('extractFfmpeg') {
 
 tasks.jar{
     dependsOn tasks.named('extractFfmpeg')
-    archiveFileName = 'IdealCup.jar'
+    archiveFileName = 'IdealCup-1.0.0.jar'
     destinationDirectory = file('E:\\Minecraft Server\\IdealCup\\plugins')
     duplicatesStrategy = DuplicatesStrategy.EXCLUDE
     from(ffmpegToolDir) {
