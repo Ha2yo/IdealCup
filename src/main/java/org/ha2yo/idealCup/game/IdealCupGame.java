@@ -767,7 +767,7 @@ public final class IdealCupGame {
         Runnable done = activeCountdownDone;
         activeCountdownDone = null;
         cancelTasks();
-        done.run();
+        scheduleNextTick(done);
         return true;
     }
 

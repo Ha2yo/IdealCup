@@ -26,7 +26,6 @@ import java.util.zip.ZipEntry;
 import java.util.zip.ZipInputStream;
 
 public final class SourceFetcher {
-    private static final String SOURCE_FILE = "sources.yml";
     private static final String SOURCE_FOLDER = "resourcepack-src";
     private static final String MANIFEST_PATH = "candidates.yml";
     private static final String YT_DLP_DOWNLOAD_URL = "https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp.exe";
@@ -47,15 +46,14 @@ public final class SourceFetcher {
         File sourceFolder = new File(plugin.getDataFolder(), SOURCE_FOLDER);
         File imageFolder = new File(sourceFolder, "images");
         File manifestFile = new File(sourceFolder, MANIFEST_PATH);
-        SourceConfig source = loadSourceConfig(manifestFile, warnings);
-        if (source == null) {
+        YamlConfiguration sourceConfig = loadSourceConfig(manifestFile, warnings);
+        if (sourceConfig == null) {
             return new FetchResult(false, 0, warnings);
         }
 
-        YamlConfiguration sourceConfig = source.config();
         ConfigurationSection candidatesSection = sourceConfig.getConfigurationSection("candidates");
         if (candidatesSection == null) {
-            warnings.add(source.name() + "에 candidates 섹션이 없습니다.");
+            warnings.add(SOURCE_FOLDER + "/" + MANIFEST_PATH + "에 candidates 섹션이 없습니다.");
             return new FetchResult(false, 0, warnings);
         }
 
@@ -149,21 +147,16 @@ public final class SourceFetcher {
         return succeeded.get();
     }
 
-    private SourceConfig loadSourceConfig(File manifestFile, List<String> warnings) {
-        File sourceListFile = new File(plugin.getDataFolder(), SOURCE_FILE);
-        if (sourceListFile.isFile()) {
-            return new SourceConfig(YamlConfiguration.loadConfiguration(sourceListFile), SOURCE_FILE);
-        }
+    private YamlConfiguration loadSourceConfig(File manifestFile, List<String> warnings) {
         if (manifestFile.isFile()) {
             YamlConfiguration manifest = YamlConfiguration.loadConfiguration(manifestFile);
             if (hasUrlSources(manifest)) {
-                return new SourceConfig(manifest, SOURCE_FOLDER + "/" + MANIFEST_PATH);
+                return manifest;
             }
         }
 
-        createSampleSourceFile(sourceListFile);
-        warnings.add("plugins/IdealCup/" + SOURCE_FILE + " 파일이 없습니다.");
-        warnings.add(SOURCE_FILE + " 예시 파일을 만들었습니다. URL과 시간을 채운 뒤 다시 실행하세요.");
+        warnings.add("plugins/IdealCup/" + SOURCE_FOLDER + "/" + MANIFEST_PATH + "에 URL이 있는 후보가 없습니다.");
+        warnings.add("URL 후보에 url, start, duration을 입력한 뒤 다시 실행하세요.");
         return null;
     }
 
@@ -292,20 +285,6 @@ public final class SourceFetcher {
         }
     }
 
-    private void createSampleSourceFile(File sourceListFile) {
-        try {
-            Files.createDirectories(sourceListFile.toPath().getParent());
-            YamlConfiguration sample = new YamlConfiguration();
-            sample.set("candidates.001.name", "예시 후보");
-            sample.set("candidates.001.url", "https://www.youtube.com/watch?v=example");
-            sample.set("candidates.001.start", "00:01:12");
-            sample.set("candidates.001.duration", 15);
-            sample.save(sourceListFile);
-        } catch (IOException exception) {
-            plugin.getLogger().warning(SOURCE_FILE + " 예시 파일을 만들 수 없습니다: " + exception.getMessage());
-        }
-    }
-
     private void runCommand(List<String> command, String failureMessage) throws IOException {
         ProcessBuilder processBuilder = new ProcessBuilder(command);
         processBuilder.redirectErrorStream(true);
@@ -415,6 +394,4 @@ public final class SourceFetcher {
     private record SourceEntry(String id, String name, String url, double startSeconds, double durationSeconds, File outputFile) {
     }
 
-    private record SourceConfig(YamlConfiguration config, String name) {
-    }
 }

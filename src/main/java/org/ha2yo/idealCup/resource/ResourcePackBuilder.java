@@ -150,6 +150,7 @@ public final class ResourcePackBuilder {
                     }
                     if (result.built()) {
                         builtCandidates++;
+                        manifest.set("candidates." + result.id() + ".manual-playback", result.manualPlayback());
                     }
                     if (result.soundModel() != null) {
                         soundModels.add(result.soundModel());
@@ -180,7 +181,7 @@ public final class ResourcePackBuilder {
             writeSoundsJson(buildFolder, soundModels);
             writePackMeta(sourceFolder, buildFolder, packDescription);
             copyPackIcon(sourceFolder, buildFolder);
-            Files.copy(manifestFile.toPath(), new File(buildFolder, MANIFEST_PATH).toPath(), java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+            manifest.save(new File(buildFolder, MANIFEST_PATH));
             zipFolder(buildFolder.toPath(), resourcePackFile().toPath());
             progress.accept("resourcepack.zip 저장 완료");
             int splitPackCount = zipSplitResourcePacks(buildFolder.toPath(), candidateIds, warnings);
@@ -210,7 +211,7 @@ public final class ResourcePackBuilder {
         if (!imageFile.isFile()) {
             String warning = "후보 " + id + " 제외: images/" + id + ".png, .jpg, .jpeg, .webp, .gif, .mp4, .mkv, .mov 파일이 없습니다.";
             warningProgress.accept(progressMessage, warning);
-            return new CandidateBuildResult(false, null, warning);
+            return new CandidateBuildResult(id, false, false, null, warning);
         }
 
         try {
@@ -219,7 +220,7 @@ public final class ResourcePackBuilder {
                 writeCandidateModels(buildFolder, id, true);
                 String soundModel = extractCandidateSound(imageFile, new File(buildFolder, "assets/idealcup/sounds/" + modelName(id) + ".ogg")) ? modelName(id) : null;
                 progress.accept(progressMessage);
-                return new CandidateBuildResult(true, soundModel, null);
+                return new CandidateBuildResult(id, true, true, soundModel, null);
             }
 
             if (isAnimatedPngSource(imageFile)) {
@@ -227,19 +228,19 @@ public final class ResourcePackBuilder {
                 if (image == null) {
                     String warning = "후보 " + id + " 제외: 올바른 이미지가 아닙니다. " + sourceImagePath(sourceFolder, imageFile);
                     warningProgress.accept(progressMessage, warning);
-                    return new CandidateBuildResult(false, null, warning);
+                    return new CandidateBuildResult(id, false, false, null, warning);
                 }
                 writeAnimatedPngSource(buildFolder, id, imageFile);
                 writeCandidateModels(buildFolder, id, true);
                 progress.accept(progressMessage);
-                return new CandidateBuildResult(true, null, null);
+                return new CandidateBuildResult(id, true, false, null, null);
             }
 
             BufferedImage image = ImageIO.read(imageFile);
             if (image == null) {
                 String warning = "후보 " + id + " 제외: 올바른 이미지가 아닙니다. " + sourceImagePath(sourceFolder, imageFile);
                 warningProgress.accept(progressMessage, warning);
-                return new CandidateBuildResult(false, null, warning);
+                return new CandidateBuildResult(id, false, false, null, warning);
             }
             BufferedImage outputImage = normalizeImage(image);
             writePngImage(buildFolder, imagePath, outputImage);
@@ -252,11 +253,11 @@ public final class ResourcePackBuilder {
                 writeCandidateModels(buildFolder, id, false);
             }
             progress.accept(progressMessage);
-            return new CandidateBuildResult(true, null, null);
+            return new CandidateBuildResult(id, true, false, null, null);
         } catch (IOException exception) {
             String warning = "후보 " + id + " 제외: " + exception.getMessage();
             warningProgress.accept(progressMessage, warning);
-            return new CandidateBuildResult(false, null, warning);
+            return new CandidateBuildResult(id, false, false, null, warning);
         }
     }
 
@@ -1238,7 +1239,7 @@ public final class ResourcePackBuilder {
     public record BuildResult(boolean success, int candidates, List<String> warnings) {
     }
 
-    private record CandidateBuildResult(boolean built, String soundModel, String warning) {
+    private record CandidateBuildResult(String id, boolean built, boolean manualPlayback, String soundModel, String warning) {
     }
 
     private record CandidatePackGroup(String id, List<Path> paths, long size) {

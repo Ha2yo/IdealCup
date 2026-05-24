@@ -6,41 +6,39 @@ Minecraft Paper 서버에서 이미지 후보를 띄워 이상형 월드컵을 �
 ## 요구 사항
 
 - Paper 1.21.x
-- Java 21 이상
-- 후보 이미지를 보려면 플레이어가 생성된 리소스팩을 적용해야 합니다.
 
 ## 명령어
 
-관리 명령어는 `idealcup.admin` 권한이 필요합니다. 기본값은 OP입니다.
+관리 명령어는 OP 권한이 필요합니다.
 `/idealcup`은 `/icup`으로도 사용할 수 있습니다.
 
-| 명령어 | 설명 |
-| --- | --- |
-| `/idealcup start <후보수> <월드컵이름>` | 월드컵을 시작합니다. 후보 수는 2 이상의 2의 거듭제곱이어야 합니다. 예: `/idealcup start 64 애니 월드컵 64강` |
-| `/idealcup stop` | 진행 중인 월드컵을 중지합니다. |
-| `/idealcup fetchsources [force] [병렬개수]` | `sources.yml` 또는 URL이 들어간 `resourcepack-src/candidates.yml`을 바탕으로 후보 영상을 준비합니다. |
-| `/idealcup buildpack [픽셀수] [fps] [병렬개수] [팩이름]` | `resourcepack-src`를 바탕으로 서버 최상위 폴더에 `resourcepack.zip`을 생성합니다. |
-| `/idealcup status` | 현재 진행 상태를 확인합니다. |
-| `/idealcup play <번호>` | 특정 후보를 보드에 미리 표시합니다. |
-| `/idealcup result` | 최종 결과 창을 엽니다. 이 명령은 일반 플레이어도 사용할 수 있습니다. |
-| `/idealcup rankingtest [개수]` | 랭킹 스크롤 화면을 테스트합니다. |
-| `/idealcup packready <player>` | 지정한 플레이어를 관람 위치로 이동시킵니다. |
-| `/idealcup set pos1` | 후보 표시 영역의 첫 번째 꼭짓점을 현재 위치로 저장합니다. |
-| `/idealcup set pos2` | 후보 표시 영역의 두 번째 꼭짓점을 현재 위치로 저장합니다. |
-| `/idealcup set debate-left` | 동점 변론 때 왼쪽 후보 측 대표가 이동할 위치를 저장합니다. |
-| `/idealcup set debate-right` | 동점 변론 때 오른쪽 후보 측 대표가 이동할 위치를 저장합니다. |
-| `/idealcup set lobby` | 접속 시 이동할 대기 위치를 저장합니다. |
-| `/idealcup set cinema` | 리소스팩 준비 완료 후 이동할 관람 위치를 저장합니다. |
-| `/idealcup set debatetime <초>` | 동점 변론 시간을 설정합니다. |
-| `/idealcup set votetime <초>` | 투표 시간을 설정합니다. |
+| 명령어 | 설명                                                                              |
+| --- |---------------------------------------------------------------------------------|
+| `/idealcup start <후보수> <월드컵이름>` | 월드컵을 시작합니다. 후보 수는 2 이상의 2의 거듭제곱이어야 합니다. 예: `/idealcup start 64 애니 월드컵 64강`      |
+| `/idealcup stop` | 진행 중인 월드컵을 중지합니다.                                                               |
+| `/idealcup fetchsources [force] [병렬개수]` | URL이 있는 후보만 내려받아 `resourcepack-src/images/<id>.mp4`로 준비합니다. URL이 없는 후보 파일은 건드리지 않습니다. |
+| `/idealcup buildpack [픽셀수] [fps] [병렬개수] [팩이름]` | `resourcepack-src`를 바탕으로 서버 최상위 폴더에 `resourcepack.zip`을 생성합니다.                  |
+| `/idealcup status` | 현재 진행 상태를 확인합니다.                                                                |
+| `/idealcup play <번호>` | 특정 후보를 보드 상에 표시합니다.                                                             |
+| `/idealcup result` | 최종 결과 창을 엽니다. 이 명령은 일반 플레이어도 사용할 수 있습니다.                                        |
+| `/idealcup rankingtest [개수]` | 랭킹 스크롤 화면을 테스트합니다.                                                              |
+| `/idealcup packready <player>` | 지정한 플레이어를 관람 위치로 이동시킵니다.                                                        |
+| `/idealcup set pos1` | 게임이 진행될 보드의 첫 번째 꼭짓점을 현재 위치로 지정합니다.                                             |
+| `/idealcup set pos2` | 게임이 진행될 보드의 두 번째 꼭짓점을 현재 위치로 지정합니다.                                             |
+| `/idealcup set debate-left` | 동점 상황일 시 변론이 이루어지는데 이 때 왼쪽 후보 측 대표가 이동할 위치를 저장합니다.                              |
+| `/idealcup set debate-right` | 동점 상황일 시 변론이 이루어지는데 이 때 오른쪽 후보 측 대표가 이동할 위치를 저장합니다.                             |
+| `/idealcup set lobby` | 서버 접속 시 이동할 대기 위치를 저장합니다.                                                       |
+| `/idealcup set cinema` | 리소스팩 준비 완료 후 이동할 관람 위치를 저장합니다.                                                  |
+| `/idealcup set debatetime <초>` | 동점 상황 발생 시 변론 시간을 설정합니다.                                                        |
+| `/idealcup set votetime <초>` | 투표 시간을 설정합니다.                                                                   |
 
 아이템 지급 명령어는 다음과 같습니다.
 
-| 명령어 | 권한 | 설명 |
-| --- | --- | --- |
-| `/마우스` | 없음 | 투표용 마우스 아이템을 지급합니다. |
-| `/망원경` | 없음 | 관전용 망원경을 지급합니다. |
-| `/리모컨` | `idealcup.admin` | 관리자 전용 리모컨을 지급합니다. 진행 중 우클릭하면 현재 단계를 즉시 넘깁니다. |
+| 명령어 | 권한 | 설명                                                                      |
+| --- | --- |-------------------------------------------------------------------------|
+| `/마우스` | 없음 | 투표용 마우스 아이템을 지급합니다.                                                     |
+| `/망원경` | 없음 | 관전용 망원경을 지급합니다.                                                         |
+| `/리모컨` | `idealcup.admin` | 관리자 전용 리모컨을 지급합니다. 진행 중 우클릭하면 현재 단계를 즉시 넘깁니다. 또한 좌클릭으로 미디어를 재생할 수 있습니다. |
 
 ## 리소스팩 준비
 
@@ -81,12 +79,15 @@ candidates:
 - `name`: 게임 화면, 결과 창, 랭킹 화면에 표시될 후보 이름
 - 후보 미디어 경로: 후보 ID 기준 `images/<id>.png`, `.jpg`, `.jpeg`, `.webp`, `.gif`, `.mp4`, `.mkv`, `.mov` 중 자동 탐색
 - 영상 후보는 빌드 과정에서 프레임 이미지와 재생용 음성으로 변환됩니다.
+- GIF와 애니메이션 PNG 후보는 화면에 표시되면 자동으로 재생됩니다.
 - 최종 랭킹 BGM은 `ending_theme.ogg`, `ending_theme2.mp3`처럼 `ending_theme` 이름으로 시작하는 파일을 사용합니다.
 
 ### 3. URL 후보 준비
 
 직접 파일을 넣는 대신 URL로 후보 영상을 준비할 수도 있습니다.
-`plugins/IdealCup/sources.yml`을 작성하거나, `resourcepack-src/candidates.yml`에 `url`, `start`, `duration`을 넣은 뒤 실행합니다.
+`/idealcup fetchsources`는 URL이 있는 후보만 내려받아 `resourcepack-src/images/<id>.mp4`로 저장합니다.
+URL이 없는 후보의 기존 이미지나 영상 파일은 건드리지 않습니다.
+`resourcepack-src/candidates.yml`에서 `url`, `start`, `duration`이 있는 후보만 준비합니다.
 
 ```yaml
 candidates:
@@ -96,6 +97,10 @@ candidates:
     start: 12.5
     duration: 8
 ```
+
+- `start`, `duration`은 초 단위 숫자 또는 시간 형식 문자열을 사용할 수 있습니다.
+- 예: `start: 80`, `start: 20.5`, `start: '00:01:20'`, `start: '00:00:20.500'`
+- 시간 형식은 YAML에서 문자열로 읽히도록 따옴표로 감싸는 것을 권장합니다.
 
 ```text
 /idealcup fetchsources
@@ -125,6 +130,10 @@ candidates:
 - `병렬개수`: 1 이상 8 이하
 - `팩이름`: 리소스팩 설명에 들어갈 이름
 
+병렬개수는 되도록이면 기본값을 쓸 것을 권장합니다.
+값을 높일 경우, 본인의 컴퓨터 사양에 따라 적절한 값을 설정하세요.
+과도한 값을 설정할 경우, 팩을 빌드하다가 컴퓨터가 다운될 수도 있습니다.
+
 성공하면 서버 최상위 폴더에 `resourcepack.zip`이 생성됩니다.
 후보가 많거나 용량이 크면 `resourcepack-parts` 폴더에 분할 리소스팩도 함께 생성될 수 있습니다.
 
@@ -132,6 +141,10 @@ candidates:
 
 생성된 `resourcepack.zip`을 플레이어가 적용해야 후보 이미지가 정상 표시됩니다.
 서버 리소스팩으로 배포하려면 `server.properties`의 `resource-pack`에 배포 URL을 설정하세요.
+
+`locations.cinema` 이동은 리소스팩 적용 완료 후 `/idealcup packready <player>`가 실행될 때 처리됩니다.
+따라서 `server.properties`의 `resource-pack`만 사용하는 경우 리소스팩은 전송되지만, IdealCup이 적용 완료 시점을 직접 알 수 없어 `cinema` 이동은 자동으로 처리되지 않습니다.
+`lobby -> 리소스팩 적용 -> cinema 이동` 흐름이 필요하면 PackRelay 같은 리소스팩 연동 플러그인에서 적용 완료 시 `/idealcup packready <player>`를 실행하도록 연결하는 방식을 권장합니다.
 
 ## 게임 진행 순서
 
@@ -147,7 +160,9 @@ candidates:
 
 ## 설정
 
-최초 실행 시 `plugins/IdealCup/config.yml`이 생성됩니다.
+최초 실행 시 `plugins/IdealCup/config.yml`과 `plugins/IdealCup/tools` 폴더가 생성됩니다.
+`tools` 폴더에 `yt-dlp.exe`, `ffmpeg.exe`가 없으면 플러그인이 자동 다운로드를 시도합니다.
+자동 다운로드에 실패하면 `tools` 폴더에 `yt-dlp.exe`, `ffmpeg.exe`를 직접 넣을 수 있습니다.
 현재 기본값은 다음과 같습니다.
 
 ```yaml
@@ -157,10 +172,6 @@ timing:
   result-seconds: 3
   round-transition-seconds: 5
   debate-seconds: 15
-
-display:
-  image-scale: 4.0
-  text-y-offset: 2.4
 
 locations:
   pos1:
@@ -222,7 +233,7 @@ ending-bgm:
 - `locations.pos1`, `locations.pos2`: 보드 표시 영역
 - `locations.debate-left`, `locations.debate-right`: 동점 변론 대표 이동 위치
 - `locations.lobby`: 플레이어 접속 시 이동 위치
-- `locations.cinema`: 리소스팩 준비 완료 후 이동 위치
+- `locations.cinema`: `/idealcup packready <player>` 실행 시 이동할 관람 위치
 - `ending-bgm.enabled`: 최종 랭킹 화면 BGM 사용 여부
 - `ending-bgm.gap-seconds`: 최종 랭킹 BGM 사이 간격
 - `ending-bgm.default-seconds`: BGM 길이를 알 수 없을 때 사용할 기본 길이

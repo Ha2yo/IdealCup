@@ -118,7 +118,10 @@ public final class CandidateRepository {
                 int imageHeight = animationInfo == null ? image.getHeight() : animationInfo.height();
                 long playbackTicks = frameTicks.stream().mapToLong(Integer::longValue).sum();
                 String soundKey = zipFile.getEntry("assets/idealcup/sounds/" + modelName + ".ogg") == null ? null : "idealcup:" + modelName;
-                candidates.add(new Candidate(id, name, imagePath, new NamespacedKey("minecraft", "idealcup/" + modelName), staticItemModel, frameItemModels, frameTicks, imageWidth, imageHeight, playbackTicks, soundKey));
+                boolean manualPlayback = manifest.contains(basePath + "manual-playback")
+                        ? manifest.getBoolean(basePath + "manual-playback")
+                        : !frameItemModels.isEmpty();
+                candidates.add(new Candidate(id, name, imagePath, new NamespacedKey("minecraft", "idealcup/" + modelName), staticItemModel, frameItemModels, frameTicks, imageWidth, imageHeight, playbackTicks, soundKey, manualPlayback));
             }
         } catch (Exception exception) {
             warnings.add("resourcepack.zip을 불러올 수 없습니다: " + exception.getMessage());

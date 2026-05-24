@@ -51,11 +51,7 @@ public final class CandidateDisplay {
     private static final double VS_OUTLINE_MULTIPLIER = 1.35D;
     private static final double MATCH_NAME_CENTER_X_RATIO = 0.17D;
     private static final double MATCH_NAME_Y_DROP_RATIO = 0.08D;
-    private static final double RANKING_TEXT_EDGE_GAP = 0.32D;
-    private static final double RANKING_LABEL_EDGE_GAP = 0.85D;
-    private static final double RANKING_STAT_LINE_GAP = 0.75D;
-    private static final double RANKING_NEXT_RANK_GAP = 2.5D;
-    private static final int RANKING_REMOVE_AFTER_EXIT_TICKS = 60;
+    private static final double RANKING_NEXT_RANK_GAP_RATIO = 0.24D;
 
     private final JavaPlugin plugin;
     private final List<Entity> entities = new ArrayList<>();
@@ -167,15 +163,15 @@ public final class CandidateDisplay {
         TextDisplay winnerText = spawnText(winner.name(), board.locationAt(winnerStart, textLayout.nameY(), TEXT_DEPTH), board.yaw(), winnerNameScale, null);
         spawnTitle(board, textLayout, title, titleScale);
 
-        int animationFrames = 30;
+        double loserEnd = resultExitX(board, loserSize, loserStartedLeft);
+        double slideDistance = Math.max(Math.abs(loserEnd - loserStart), Math.abs(winnerStart));
+        int animationFrames = resultAnimationFrames(board, slideDistance);
         animationTask = new BukkitRunnable() {
             private int frame;
 
             @Override
             public void run() {
-                double progress = easeOutCubic((double) frame / (double) (animationFrames - 1));
-                double loserExitPadding = 0.25D;
-                double loserEnd = loserStartedLeft ? -board.width() / 2.0D - loserSize.width() / 2.0D - loserExitPadding : board.width() / 2.0D + loserSize.width() / 2.0D + loserExitPadding;
+                double progress = easeOutCubic((double) Math.min(frame, animationFrames - 1) / (double) (animationFrames - 1));
                 double xLoser = lerp(loserStart, loserEnd, progress);
                 double xWinner = lerp(winnerStart, 0.0D, progress);
                 DisplaySize winnerSize = lerpSize(winnerStartSize, winnerEndSize, progress);
@@ -229,12 +225,13 @@ public final class CandidateDisplay {
 
         double rowGap = board.height() * 0.65D;
         double startY = -board.height() / 2.0D - rowGap * 0.35D;
-        double endY = startY + (rowGap + RANKING_TEXT_EDGE_GAP + RANKING_LABEL_EDGE_GAP + RANKING_STAT_LINE_GAP + RANKING_NEXT_RANK_GAP) * limit + board.height() * 1.2D;
+        double endY = startY + rowGap * 2.2D * limit + board.height() * 1.2D;
+        double imageYOffset = endY - startY;
         List<ScrollingImage> scrollingImages = spawnRankingImages(board, rows, limit, startY, rowGap);
         animateRankingMove(
                 scrollingImages,
-                endY - startY,
-                300 + limit * 100,
+                imageYOffset,
+                rankingScrollFrames(board, imageYOffset),
                 board.centerY() + board.height() / 2.0D,
                 board.centerY() - board.height() / 2.0D
         );
@@ -370,6 +367,7 @@ public final class CandidateDisplay {
             itemDisplay.setInterpolationDuration(interpolationTicks);
             itemDisplay.setBrightness(new Display.Brightness(13, 13));
             itemDisplay.setTransformation(imageTransform(size));
+            applyImageDisplayBounds(itemDisplay, size);
         });
         display.addScoreboardTag(DISPLAY_TAG);
         entities.add(display);
@@ -393,7 +391,7 @@ public final class CandidateDisplay {
     private TextDisplay spawnPlayOverlay(Location imageLocation, float yaw, DisplaySize size) {
         BlockFace face = yawToFace(yaw);
         Location location = imageLocation.clone().add(face.getModX() * 0.09D, 0.0D, face.getModZ() * 0.09D);
-        double scale = Math.max(1.8D, Math.min(size.width(), size.height()) * 0.65D);
+        double scale = Math.min(size.width(), size.height()) * 0.55D;
         TextDisplay display = location.getWorld().spawn(location, TextDisplay.class, textDisplay -> {
             textDisplay.text(Component.text("▶"));
             textDisplay.setBillboard(Display.Billboard.FIXED);
@@ -516,10 +514,10 @@ public final class CandidateDisplay {
         double imageAreaWidth = board.width() * 0.22D;
         double imageAreaHeight = rowGap * 0.68D;
         double x = 0.0D;
-        double textBase = Math.max(0.8D, Math.min(rowGap, board.width() / 5.5D));
-        double preferredRankScale = clamp(textBase * 0.78D, 1.4D, 4.4D);
-        double preferredLabelScale = clamp(textBase * 0.62D, 1.1D, 3.4D);
-        double preferredWinsScale = clamp(textBase * 0.68D, 1.2D, 3.6D);
+        double textBase = Math.max(0.25D, Math.min(rowGap, board.width() / 5.5D));
+        double preferredRankScale = Math.max(0.35D, textBase * 0.78D);
+        double preferredLabelScale = Math.max(0.24D, textBase * 0.48D);
+        double preferredWinsScale = Math.max(0.26D, textBase * 0.50D);
         double rankY = baseY + board.height() * 0.18D;
         for (int index = 0; index < imageCount; index++) {
             RankingRow row = rows.get(index);
@@ -534,9 +532,24 @@ public final class CandidateDisplay {
             double rankScale = fitTextScale(rank, preferredRankScale, imageAreaWidth * 1.4D);
             double labelScale = fitTextScale(label, preferredLabelScale, imageAreaWidth * 2.15D);
             double winsScale = fitTextScale(stats, preferredWinsScale, imageAreaWidth * 2.3D);
-            double y = rankY - RANKING_TEXT_EDGE_GAP - size.height() / 2.0D;
-            double labelY = y - size.height() / 2.0D - RANKING_LABEL_EDGE_GAP;
-            double statY = labelY - RANKING_STAT_LINE_GAP;
+            double rankToImageGap = rankingRankToImageGap(board, rankScale);
+            double imageToLabelGap = rankingImageToLabelGap(board, labelScale);
+            double labelToStatGap = rankingLabelToStatGap(board, winsScale);
+            double nextRankGap = dynamicNextRankGap(imageAreaHeight, rankScale, winsScale, rowGap);
+            double rankHalfHeight = rankingRankHalfHeight(rankScale);
+            double labelHalfHeight = rankingTextHalfHeight(labelScale);
+            double winsHalfHeight = rankingTextHalfHeight(winsScale);
+            double rankBottomY = rankY - rankHalfHeight;
+            double imageTopY = rankBottomY - rankToImageGap;
+            double y = imageTopY - size.height() / 2.0D;
+            double imageBottomY = imageTopY - size.height();
+            double labelTopY = imageBottomY - imageToLabelGap;
+            double labelY = labelTopY - labelHalfHeight;
+            double labelBottomY = labelTopY - labelHalfHeight * 2.0D;
+            double statTopY = labelBottomY - labelToStatGap;
+            double statY = statTopY - winsHalfHeight;
+            double statBottomY = statTopY - winsHalfHeight * 2.0D;
+            double rowStep = rankY - statBottomY + nextRankGap;
             images.add(new ScrollingImage(
                     candidate,
                     rank,
@@ -551,15 +564,47 @@ public final class CandidateDisplay {
                     winsScale,
                     size
             ));
-            rankY = statY - RANKING_NEXT_RANK_GAP;
+            rankY -= rowStep;
         }
         return images;
+    }
+
+    private double rankingTextHalfHeight(double scale) {
+        return scale * 0.14D;
+    }
+
+    private double rankingRankHalfHeight(double scale) {
+        return scale * 0.08D;
+    }
+
+    private double rankingImageToLabelGap(BoardSpec board, double textScale) {
+        double boardScale = Math.max(0.1D, Math.min(board.width(), board.height()));
+        double gap = textScale * 0.15D;
+        return clamp(gap, boardScale * 0.006D, boardScale * 0.18D);
+    }
+
+    private double rankingLabelToStatGap(BoardSpec board, double textScale) {
+        double boardScale = Math.max(0.1D, Math.min(board.width(), board.height()));
+        double gap = textScale * 0.01D;
+        return clamp(gap, boardScale * 0.004D, boardScale * 0.16D);
+    }
+
+    private double rankingRankToImageGap(BoardSpec board, double textScale) {
+        double boardScale = Math.max(0.1D, Math.min(board.width(), board.height()));
+        double gap = textScale * 0.0D;
+        return clamp(gap, 0.0D, boardScale * 0.02D);
+    }
+
+    private double dynamicNextRankGap(double imageHeight, double rankScale, double winsScale, double rowGap) {
+        double sizeBasedGap = imageHeight * RANKING_NEXT_RANK_GAP_RATIO;
+        double textBasedGap = Math.max(rankScale, winsScale) * 0.65D;
+        double rowBasedGap = rowGap * 0.28D;
+        return Math.max(0.35D, Math.min(Math.max(Math.max(sizeBasedGap, textBasedGap), rowBasedGap), rowGap * 0.9D));
     }
 
     private void animateRankingMove(List<ScrollingImage> images, double imageYOffset, int frames, double boardTopY, double boardBottomY) {
         animationTask = new BukkitRunnable() {
             private int frame;
-            private final Map<ScrollingImage, Integer> exitedTicks = new HashMap<>();
 
             @Override
             public void run() {
@@ -587,12 +632,9 @@ public final class CandidateDisplay {
                     if (!image.animationStarted() && imageTopY >= boardBottomY && imageBottomY <= boardTopY) {
                         image.startAnimation(frame);
                     }
-                    if (imageBottomY > boardTopY) {
-                        int ticks = exitedTicks.merge(image, 1, Integer::sum);
-                        if (ticks >= RANKING_REMOVE_AFTER_EXIT_TICKS) {
-                            removeRankingImage(image);
-                            continue;
-                        }
+                    if (rankingRowBottomY(image, offset) > boardTopY) {
+                        removeRankingImage(image);
+                        continue;
                     }
                     if (image.animationStarted() && imageBottomY <= boardTopY) {
                         updateRankingFrame(image, frame - image.animationStartFrame());
@@ -608,6 +650,44 @@ public final class CandidateDisplay {
                 }
             }
         }.runTaskTimer(plugin, 0L, 1L);
+    }
+
+    private int resultAnimationFrames(BoardSpec board, double slideDistance) {
+        double boardScale = Math.max(0.1D, Math.min(board.width(), board.height()));
+        double normalizedDistance = slideDistance / Math.max(0.1D, board.width());
+        double sizeFactor = clamp(boardScale / 6.0D, 0.75D, 1.35D);
+        double distanceFactor = clamp(normalizedDistance / 0.58D, 0.85D, 1.2D);
+        int preferredFrames = (int) Math.round(30.0D * sizeFactor * distanceFactor);
+        int resultTicks = Math.max(12, plugin.getConfig().getInt("timing.result-seconds", 3) * 20);
+        return Math.max(12, Math.min(preferredFrames, Math.max(12, resultTicks - 1)));
+    }
+
+    private double resultExitX(BoardSpec board, DisplaySize size, boolean leftSide) {
+        double exitPadding = resultExitPadding(board);
+        double exitDistance = board.width() / 2.0D + size.width() / 2.0D + exitPadding;
+        return leftSide ? -exitDistance : exitDistance;
+    }
+
+    private double resultExitPadding(BoardSpec board) {
+        double boardScale = Math.max(0.1D, Math.min(board.width(), board.height()));
+        return clamp(board.width() * 0.025D, boardScale * 0.02D, board.width() * 0.06D);
+    }
+
+    private int rankingScrollFrames(BoardSpec board, double imageYOffset) {
+        double boardHeights = imageYOffset / Math.max(0.1D, board.height());
+        return Math.max(110, (int) Math.round(boardHeights * 130.0D));
+    }
+
+    private double rankingRowBottomY(ScrollingImage image, double offset) {
+        double imageBottomY = image.imageStart().getY() + offset - image.size().height() / 2.0D;
+        double rankBottomY = image.rankStart().getY() + offset - textHalfHeight(image.rankScale());
+        double labelBottomY = image.labelStart().getY() + offset - textHalfHeight(image.labelScale());
+        double winsBottomY = image.winsStart().getY() + offset - textHalfHeight(image.winsScale());
+        return Math.min(Math.min(imageBottomY, rankBottomY), Math.min(labelBottomY, winsBottomY));
+    }
+
+    private double textHalfHeight(double scale) {
+        return scale * 0.18D;
     }
 
     private void updateRankingFrame(ScrollingImage image, int elapsedTicks) {
@@ -649,6 +729,16 @@ public final class CandidateDisplay {
     }
 
     private void removeIfValid(Entity entity) {
+        if (entity instanceof TextDisplay textDisplay) {
+            List<TextDisplay> outlines = textOutlines.remove(textDisplay);
+            if (outlines != null) {
+                for (TextDisplay outline : outlines) {
+                    if (outline.isValid()) {
+                        outline.remove();
+                    }
+                }
+            }
+        }
         if (entity != null && entity.isValid()) {
             entity.remove();
         }
@@ -707,7 +797,7 @@ public final class CandidateDisplay {
             return List.of();
         }
         List<TextDisplay> outlines = new ArrayList<>(4);
-        double offset = TEXT_OUTLINE_OFFSET * outlineMultiplier * Math.max(0.7D, Math.min(1.6D, scale / 3.0D));
+        double offset = outlineOffset(scale, outlineMultiplier);
         outlines.add(spawnTextOutline(text, outlineLocation(location, yaw, -offset, 0.0D), yaw, scale));
         outlines.add(spawnTextOutline(text, outlineLocation(location, yaw, offset, 0.0D), yaw, scale));
         outlines.add(spawnTextOutline(text, outlineLocation(location, yaw, 0.0D, -offset), yaw, scale));
@@ -746,12 +836,23 @@ public final class CandidateDisplay {
         return location.clone().add(depthX, verticalOffset, horizontalOffset + depthZ);
     }
 
+    private double outlineOffset(double scale, double multiplier) {
+        return TEXT_OUTLINE_OFFSET * multiplier * clamp(scale / 3.0D, 0.22D, 1.6D);
+    }
+
     private void moveImage(ItemDisplay display, Location location, DisplaySize size) {
         if (!display.isValid()) {
             return;
         }
         display.teleport(location);
         display.setTransformation(imageTransform(size));
+        applyImageDisplayBounds(display, size);
+    }
+
+    private void applyImageDisplayBounds(ItemDisplay display, DisplaySize size) {
+        display.setDisplayWidth((float) Math.max(0.1D, size.width()));
+        display.setDisplayHeight((float) Math.max(0.1D, size.height()));
+        display.setViewRange((float) clamp(Math.max(size.width(), size.height()) * 4.0D, 8.0D, 128.0D));
     }
 
     private void moveText(TextDisplay display, Location location, double scale) {
@@ -768,7 +869,7 @@ public final class CandidateDisplay {
         if (outlines == null) {
             return;
         }
-        double offset = TEXT_OUTLINE_OFFSET * Math.max(0.7D, Math.min(1.6D, scale / 3.0D));
+        double offset = outlineOffset(scale, 1.0D);
         Location[] locations = new Location[] {
                 outlineLocation(location, display.getLocation().getYaw(), -offset, 0.0D),
                 outlineLocation(location, display.getLocation().getYaw(), offset, 0.0D),
@@ -807,11 +908,11 @@ public final class CandidateDisplay {
     }
 
     private TextLayout textLayout(BoardSpec board) {
-        double base = Math.max(0.8D, Math.min(board.height(), board.width() / 4.0D));
-        double titleScale = clamp(base * 1.05D, 2.6D, 7.2D);
-        double nameScale = clamp(base * 0.72D, 2.0D, 5.2D);
-        double vsScale = clamp(base * 1.0D, 2.6D, 6.5D);
-        double titleBarHeight = Math.max(0.9D, titleScale * 0.34D);
+        double base = Math.max(0.25D, Math.min(board.height(), board.width() / 4.0D));
+        double titleScale = Math.max(0.45D, base * 1.05D);
+        double nameScale = Math.max(0.35D, base * 0.72D);
+        double vsScale = Math.max(0.45D, base * 1.0D);
+        double titleBarHeight = Math.max(base * 0.35D, titleScale * 0.34D);
         double contentHeight = Math.max(1.0D, board.height() - titleBarHeight);
         double contentY = -titleBarHeight / 2.0D;
         double titleY = board.height() / 2.0D - titleBarHeight / 2.0D;
@@ -830,11 +931,13 @@ public final class CandidateDisplay {
         if (estimatedWidth <= maxWorldWidth) {
             return preferredScale;
         }
-        return Math.max(0.55D, preferredScale * maxWorldWidth / estimatedWidth);
+        return Math.max(0.25D, preferredScale * maxWorldWidth / estimatedWidth);
     }
 
     private double clamp(double value, double min, double max) {
-        return Math.max(min, Math.min(max, value));
+        double lower = Math.min(min, max);
+        double upper = Math.max(min, max);
+        return Math.max(lower, Math.min(upper, value));
     }
 
     private DisplaySize fitImageSize(Candidate candidate, double maxWidth, double maxHeight) {
